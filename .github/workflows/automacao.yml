@@ -1,0 +1,25 @@
+name: Robô Extrator PNCP FarmaUSA
+
+on:
+  schedule:
+    # Roda a cada 2 horas (Horário UTC)
+    - cron: '0 */2 * * *'
+  workflow_dispatch: # Permite que você clique num botão para rodar agora se quiser
+
+jobs:
+  atualizar_banco:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Puxar os arquivos do repositório
+        uses: actions/checkout@v3
+
+      - name: Instalar o Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Instalar bibliotecas necessárias
+        run: pip install pandas requests
+
+      - name: Rodar o Extrator
+        run: python LICITACAO.PY
