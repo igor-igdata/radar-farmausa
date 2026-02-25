@@ -2,24 +2,41 @@ name: Robô Extrator PNCP FarmaUSA
 
 on:
   schedule:
-    # Roda a cada 2 horas (Horário UTC)
-    - cron: '0 */2 * * *'
-  workflow_dispatch: # Permite que você clique num botão para rodar agora se quiser
+    # Roda a cada 2 horas das 8:30 às 18:30 (Brasília) = 11:30 às 21:30 UTC
+    - cron: '30 11,13,15,17,19,21 * * *'
+  workflow_dispatch: # Permite rodar manualmente pelo GitHub Actions
 
 jobs:
   atualizar_banco:
     runs-on: ubuntu-latest
+    timeout-minutes: 15  # Mata o job se travar (ex: API PNCP sem resposta)
+
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+
     steps:
       - name: Puxar os arquivos do repositório
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4  # v3 está depreciado
 
       - name: Instalar o Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'  # Cacheia dependências para rodar mais rápido
 
       - name: Instalar bibliotecas necessárias
         run: pip install pandas requests
 
       - name: Rodar o Extrator
         run: python LICITACAO.PY
+
+      - name: Notificar falha no Telegram
+        if: failure()  # Só roda se o passo anterior falhar
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TELEGRAM_CHAT_ID}" \
+            -d text="⚠️ <b>Radar FarmaUSA</b>%0AO robô PNCP falhou na execução das $(date +'%d/%m/%Y %H:%M') UTC.%0A%0AVerifique em: https://github.com/igor-igdata/radar-farmausa/actions" \
+            -d parse_mode="HTML"
