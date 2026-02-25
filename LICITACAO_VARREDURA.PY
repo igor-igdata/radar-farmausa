@@ -49,14 +49,18 @@ PNCP_HEADERS = {
     "Accept": "application/json",
 }
 
-KEYWORDS = [
-    "canabidiol", "cannabis", "cbd", "cannabidiol",
-    "thc", "cânhamo", "marijuana", "maconha medicinal"
+# Keywords que podem ser substring — específicas o suficiente
+KEYWORDS_SUBSTRING = [
+    "canabidiol", "cannabidiol", "cannabis", "cânhamo",
+    "marijuana", "maconha medicinal",
 ]
+
+# Keywords curtas — só batem se forem palavra isolada
+# (evita falsos positivos: "CBD/22.22" em código de poste, "THC" em siglas)
+KEYWORDS_PALAVRA = ["cbd", "thc"]
 
 PNCP_API_BASE = "https://pncp.gov.br/api/consulta/v1"
 
-DIAS_RETROATIVOS = 30
 TAMANHO_PAGINA = 50
 
 # Pausa entre chamadas (maior que produção para não sobrecarregar)
@@ -76,10 +80,20 @@ MODALIDADES = MODALIDADES_COM_ITENS + MODALIDADES_SO_OBJETO
 # ================= UTILITÁRIOS =================
 
 def keyword_match(texto):
+    import re
     if not texto:
         return False
     texto_lower = str(texto).lower()
-    return any(kw.lower() in texto_lower for kw in KEYWORDS)
+    # Keywords longas: basta ser substring (específicas o suficiente)
+    if any(kw in texto_lower for kw in KEYWORDS_SUBSTRING):
+        return True
+    # Keywords curtas (cbd, thc): não podem estar coladas a letras, números ou "/"
+    # Ex.: "CBD/22.22" (código de poste) → False | "CBD 50mg" → True
+    for kw in KEYWORDS_PALAVRA:
+        padrao = r'(?<![a-z0-9])' + re.escape(kw) + r'(?![a-z0-9/])'
+        if re.search(padrao, texto_lower):
+            return True
+    return False
 
 
 def formatar_data_br(data_iso):
@@ -98,7 +112,7 @@ def buscar_datas_individuais(cnpj, ano, seq):
     """Busca datas no endpoint individual quando a listagem retorna null."""
     url = f"{PNCP_API_BASE}/orgaos/{cnpj}/compras/{ano}/{seq}"
     try:
-        r = requests.get(url, headers=PNCP_HEADERS, timeout=30, allow_redirects=True)
+        r = requests.get(url, headers=PNCP_HEADERS, timeout=45, allow_redirects=True)
         if r.status_code == 200:
             dados = r.json()
             if isinstance(dados, dict):
@@ -125,7 +139,7 @@ def buscar_itens(cnpj, ano, seq):
             url,
             headers=PNCP_HEADERS,
             params={"pagina": 1, "tamanhoPagina": 500},
-            timeout=30,
+            timeout=45,
             allow_redirects=True
         )
         if r.status_code == 200:
@@ -185,7 +199,7 @@ def buscar_contratacoes_pagina(data_inicial, data_final, modalidade, pagina=1):
         "pagina": pagina,
     }
     try:
-        r = requests.get(url, params=params, headers=PNCP_HEADERS, timeout=30)
+        r = requests.get(url, params=params, headers=PNCP_HEADERS, timeout=90)
         if r.status_code == 200:
             return r.json().get("data", [])
         elif r.status_code == 204:
@@ -300,14 +314,13 @@ def processar_contratacao(item, idx, total, buscar_itens_flag=True):
     valor_itens = 0.0
     match_itens = False
 
-    if buscar_itens_flag:
-        # Busca itens — pode ter cannabis mesmo sem mencionar no objeto
+    if not match_objeto and buscar_itens_flag:
+        # Objeto não bateu — tenta nos itens como fallback (só para mod 6, 8, 9)
         itens_banco, valor_itens, match_itens = buscar_itens(cnpj, ano, seq)
         time.sleep(PAUSA_ENTRE_ITENS)
-    else:
-        # Modalidades que raramente cadastram itens: só checa objeto
-        if not match_objeto:
-            return False
+    elif not match_objeto:
+        # Modalidades só-objeto: descarta direto sem chamar API de itens
+        return False
 
     if not match_objeto and not match_itens:
         return False
@@ -376,12 +389,14 @@ def main():
         sys.exit(1)
 
     hoje = datetime.date.today()
-    data_ini = hoje - datetime.timedelta(days=DIAS_RETROATIVOS)
-    data_ini_str = data_ini.strftime("%Y%m%d")
     data_fim_str = hoje.strftime("%Y%m%d")
+    data_ini_str = (hoje - datetime.timedelta(days=30)).strftime("%Y%m%d")
 
-    log.info(f"📅 Período: {data_ini.strftime('%d/%m/%Y')} a {hoje.strftime('%d/%m/%Y')}")
-    log.info(f"🔑 Keywords: {', '.join(KEYWORDS)}")
+    data_ini = datetime.datetime.strptime(data_ini_str, "%Y%m%d").date()
+    data_fim = datetime.datetime.strptime(data_fim_str, "%Y%m%d").date()
+
+    log.info(f"📅 Período: {data_ini.strftime('%d/%m/%Y')} a {data_fim.strftime('%d/%m/%Y')}")
+    log.info(f"🔑 Keywords: {', '.join(KEYWORDS_SUBSTRING + KEYWORDS_PALAVRA)}")
     log.info(f"📈 Modalidades com busca de itens: {MODALIDADES_COM_ITENS}")
     log.info(f"📋 Modalidades só por objeto:      {MODALIDADES_SO_OBJETO}")
     log.info("=" * 60)
