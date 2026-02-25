@@ -576,6 +576,43 @@ def processar_contratacao(item):
 
 # ================= MAIN =================
 
+def enviar_status_diario(total_analisadas, total_encontradas, total_novas):
+    """Envia mensagem de status diário no Telegram."""
+    if not TELEGRAM_BOT_TOKEN or not CHAT_ID:
+        return
+
+    hoje = datetime.date.today().strftime("%d/%m/%Y")
+
+    if total_novas > 0:
+        status_line = f"\U0001f3af {total_novas} nova(s) licitação(ões) encontrada(s)!"
+    elif total_encontradas > 0:
+        status_line = f"\U0001f4cb {total_encontradas} edital(is) já cadastrado(s) — sem novidades"
+    else:
+        status_line = "\u2705 Nenhuma licitação cannabis hoje"
+
+    mensagem = (
+        f"\U0001f4ca <b>Radar FarmaUSA — Status Diário</b>\n"
+        f"\U0001f4c5 {hoje}\n"
+        f"─────────────────────\n"
+        f"\U0001f50d Contratações analisadas: <b>{total_analisadas}</b>\n"
+        f"\U0001f33f Com cannabis: <b>{total_encontradas}</b>\n"
+        f"\U0001f514 Novas notificações: <b>{total_novas}</b>\n"
+        f"─────────────────────\n"
+        f"{status_line}\n"
+        f"\U0001f916 Sistema operando normalmente"
+    )
+
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            json={"chat_id": CHAT_ID, "text": mensagem, "parse_mode": "HTML"},
+            timeout=10,
+        )
+        log.info("\U0001f4f1 Status diário enviado ao Telegram")
+    except Exception as e:
+        log.warning(f"Erro ao enviar status diário: {e}")
+
+
 def main():
     log.info("=" * 60)
     log.info("🔍 RADAR FARMAUSA v2 — Licitações Cannabis")
@@ -621,6 +658,11 @@ def main():
     log.info(f"   Com cannabis: {total_encontradas}")
     log.info(f"   Novas (Telegram): {total_novas}")
     log.info("=" * 60)
+
+    # Envia status diário se for a execução das 18h (hora UTC 21)
+    hora_atual = datetime.datetime.utcnow().hour
+    if hora_atual == 21:  # 21h UTC = 18h Brasília
+        enviar_status_diario(total_analisadas, total_encontradas, total_novas)
 
 
 if __name__ == "__main__":
