@@ -25,19 +25,6 @@ def formatar_data_br(data_iso):
         return dt.strftime('%d/%m/%Y %H:%M')
     except: return data_iso
 
-def buscar_detalhes_datas(cnpj, ano, sequencial):
-    url = f"https://pncp.gov.br/api/pncp/v1/orgaos/{cnpj}/compras/{ano}/{sequencial}"
-    try:
-        r = requests.get(url, timeout=10)
-        if r.status_code == 200:
-            data = r.json()
-            return data.get("dataAberturaProposta"), data.get("dataEncerramentoProposta")
-        else:
-            print(f"⚠️ Erro ao buscar datas no PNCP: Status {r.status_code}")
-    except Exception as e:
-        print(f"⚠️ Erro de conexão com PNCP: {e}")
-    return None, None
-
 def check_and_save_supabase(dados_edital, dados_itens):
     url_id = dados_edital["url_id"]
     endpoint_editais = f"{SUPABASE_URL}/rest/v1/editais_pncp"
@@ -55,7 +42,7 @@ def check_and_save_supabase(dados_edital, dados_itens):
     except Exception as e:
         print(f"Aviso GET: {e}")
     
-    # UPSERT FORÇADO COM LOG DE ERRO
+    # UPSERT COM CONFLITO RESOLVIDO
     headers_upsert = SUPABASE_HEADERS.copy()
     headers_upsert["Prefer"] = "resolution=merge-duplicates"
     
@@ -66,13 +53,13 @@ def check_and_save_supabase(dados_edital, dados_itens):
         timeout=10
     )
     
-    # RAIO-X: Se o Supabase recusar, vai gritar o erro exato aqui!
     if res.status_code not in [200, 201, 204]:
         print(f"🚨 ERRO SUPABASE ({url_id}): {res.status_code} - {res.text}")
         return False
     else:
         print(f"✅ Upsert OK ({url_id}) - Início: {dados_edital.get('data_inicio')} | Fim: {dados_edital.get('data_fim')}")
     
+    # SÓ ENVIA ITENS SE FOR INÉDITO NO BANCO
     if is_new:
         if dados_itens:
             for item in dados_itens:
@@ -89,6 +76,7 @@ def classificar_modalidade(modalidade):
     return "📈 <b>GRANDE VOLUME / PREGÃO</b>"
 
 def buscar_itens_relevantes(cnpj, ano, sequencial):
+    # Essa rota não sofre bloqueio (Erro 301)
     url = f"https://pncp.gov.br/api/pncp/v1/orgaos/{cnpj}/compras/{ano}/{sequencial}/itens"
     apresentacoes_texto, apresentacoes_banco = [], []
     valor_total = 0.0
@@ -120,46 +108,68 @@ def enviar_telegram(edital, apresentacoes_texto, tag):
     
     msg = f"""🏛️ <b>NOVA LICITAÇÃO - CANNABIS</b>
 {tag}
+
 📋 <b>Título:</b> {edital.get('titulo')}
 🏢 <b>Órgão:</b> {edital.get('orgao')}
+📍 <b>Local:</b> {edital.get('uf')}
+
 ⏳ <b>CRONOGRAMA:</b>
 🟢 <b>Início:</b> {dt_inicio}
 🔴 <b>FIM:</b> {dt_fim}
+
 🔗 <a href="https://pncp.gov.br/app/editais{edital.get('url_id')}">Acessar no PNCP</a>
 <i>Alerta automático - FarmaUSA Life</i>"""
-    requests.post(url, json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML"})
+    requests.post(url, json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML", "disable_web_page_preview": True})
 
 def buscar_editais():
-    print("Iniciando busca (Modo Histórico e Debug Ativado)...")
+    print("Iniciando busca direta (Bypass Erro 301)...")
     for keyword in KEYWORDS:
-        api_url = f"https://pncp.gov.br/api/search/?q={keyword}&tipos_documento=edital&ordenacao=-data&pagina=1&tam_pagina=20"
+        print(f"Buscando por: {keyword}...")
+        
+        # Aqui está a chave! API limpa que entrega as datas na mesma hora:
+        api_url = f"https://pncp.gov.br/api/pncp/v1/editais?pagina=1&termo={keyword}"
+        
         try:
-            r = requests.get(api_url, timeout=10)
+            r = requests.get(api_url, timeout=15)
             if r.status_code != 200: continue
             
-            for item in r.json().get("items", []):
-                url_id = item.get("item_url")
-                cnpj = item.get('orgao_cnpj')
-                ano = item.get('ano')
-                seq = item.get('numero_sequencial')
+            licitacoes = r.json().get("data", [])
+            for item in licitacoes:
+                cnpj = item.get('orgaoEntidade', {}).get('cnpj')
+                ano = item.get('anoEdital')
+                seq = item.get('sequencialEdital')
+                
+                url_id = f"/compras/{cnpj}/{ano}/{seq}"
+                
+                # As datas já vêm preenchidas sem precisar bater no muro 301
+                data_inicio = item.get("dataAberturaProposta")
+                data_fim = item.get("dataEncerramentoProposta")
                 
                 apres_texto, apres_banco, valor = buscar_itens_relevantes(cnpj, ano, seq)
-                data_inicio, data_fim = buscar_detalhes_datas(cnpj, ano, seq)
+                
+                # Criando título bonitinho: ex "Dispensa 8/2026"
+                titulo_ajustado = f"{item.get('modalidadeNome')} {item.get('numeroEdital')}"
                 
                 dados_edital = {
-                    "url_id": url_id, "titulo": item.get("title"),
-                    "orgao": item.get("orgao_nome"), "uf": item.get("uf"),
-                    "modalidade": item.get("modalidade_licitacao_nome"),
-                    "data_publicacao": item.get("data_publicacao_pncp", ""),
+                    "url_id": url_id, 
+                    "titulo": titulo_ajustado,
+                    "orgao": item.get("orgaoEntidade", {}).get("razaoSocial"), 
+                    "uf": item.get("uf"),
+                    "modalidade": item.get("modalidadeNome"),
+                    "data_publicacao": item.get("dataPublicacaoPncp"),
                     "valor_total_estimado": valor,
-                    "data_inicio": data_inicio, "data_fim": data_fim
+                    "data_inicio": data_inicio, 
+                    "data_fim": data_fim
                 }
                 
+                # Envia e decide se alerta o Telegram
                 if check_and_save_supabase(dados_edital, apres_banco):
-                    tag = classificar_modalidade(item.get("modalidade_licitacao_nome"))
+                    tag = classificar_modalidade(item.get("modalidadeNome"))
                     enviar_telegram(dados_edital, apres_texto, tag)
-                    print(f"🚀 Enviado Telegram: {item.get('title')}")
-        except Exception as e: print(f"Erro geral: {e}")
+                    print(f"🚀 Enviado Telegram: {titulo_ajustado}")
+                    
+        except Exception as e: 
+            print(f"Erro geral: {e}")
 
 if __name__ == "__main__":
     buscar_editais()
