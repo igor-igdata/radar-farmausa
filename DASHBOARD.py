@@ -310,6 +310,8 @@ with aba1:
     st.markdown("### 📋 Lista de Oportunidades")
 
     df_exib = df_f.copy()
+    # Remove colunas string formatadas que conflitam com as colunas datetime/numéricas
+    df_exib = df_exib.drop(columns=["Publicação", "Abertura", "Encerramento"], errors="ignore")
     ordem_status = {"⚠️ Urgente": 0, "✅ Aberto": 1, "⚪ Sem data": 2, "🔴 Encerrado": 3}
     df_exib["_ordem"] = df_exib["status"].map(ordem_status).fillna(9)
     df_exib = df_exib.sort_values(["_ordem", "dt_fim"], na_position="last")
