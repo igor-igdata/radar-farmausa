@@ -28,7 +28,7 @@ jobs:
           cache: 'pip'  # Cacheia dependências para rodar mais rápido
 
       - name: Instalar bibliotecas necessárias
-        run: pip install pandas requests
+        run: pip install requests
 
       - name: Rodar o Extrator
         run: python LICITACAO.PY
