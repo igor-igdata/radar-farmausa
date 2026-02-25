@@ -71,7 +71,7 @@ KEYWORDS = [
 
 PNCP_API_BASE = "https://pncp.gov.br/api/consulta/v1"
 
-DIAS_RETROATIVOS = 15
+DIAS_RETROATIVOS = 1
 
 # Modalidades: 4=Concorrência Eletrônica, 5=Concorrência Presencial,
 # 6=Pregão Eletrônico, 7=Pregão Presencial, 8=Dispensa,
