@@ -1,16 +1,15 @@
 """
-DASHBOARD - Radar FarmaUSA (v2)
+DASHBOARD - Radar FarmaUSA (v3)
 ================================
 Dashboard Streamlit para monitoramento de licitações de cannabis no PNCP.
 
-Melhorias v2:
-- KPIs de negócio: frascos, valor total, estados, editais ativos
-- JOIN com itens_pncp: mostra produto real, qtd e preço unitário
-- Filtros por UF, modalidade, prazo e busca textual
-- Bloco de alertas urgentes (< 72h) destacado no topo
-- Link clicável correto para o PNCP
-- Aba de análise com gráficos por UF e modalidade
-- Tratamento de dados inconsistentes (qtd absurda, itens não-cannabis)
+Melhorias v3:
+- Link direto na tabela (column_config.LinkColumn)
+- KPI valor total usa valor_total_estimado do banco (correto)
+- Campo objeto exibido no detalhe de cada edital
+- Tabela de preços com UF + órgão + data (inteligência de mercado real)
+- Coluna Valor Total na tabela principal
+- Segundo gráfico: Valor por UF e Valor por Modalidade
 """
 
 import streamlit as st
@@ -35,7 +34,6 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# Quantidade máxima razoável de frascos num único item (filtro anti-lixo)
 QTD_MAX_RAZOAVEL = 100_000
 
 # ─── CSS customizado ──────────────────────────────────────────────────────────
@@ -60,7 +58,6 @@ st.markdown("""
 
 @st.cache_data(ttl=120)
 def carregar_editais():
-    """Busca todos os editais do Supabase."""
     try:
         url = f"{SUPABASE_URL}/rest/v1/editais_pncp?select=*&order=data_publicacao.desc"
         r = requests.get(url, headers=HEADERS, timeout=15)
@@ -73,7 +70,6 @@ def carregar_editais():
 
 @st.cache_data(ttl=120)
 def carregar_itens():
-    """Busca todos os itens do Supabase."""
     try:
         url = f"{SUPABASE_URL}/rest/v1/itens_pncp?select=*"
         r = requests.get(url, headers=HEADERS, timeout=15)
@@ -82,11 +78,9 @@ def carregar_itens():
         if df.empty:
             return pd.DataFrame()
 
-        # Remove itens com quantidade absurda (erro de dado da API)
         if "quantidade" in df.columns:
             df = df[df["quantidade"].fillna(0) <= QTD_MAX_RAZOAVEL]
 
-        # Remove falsos positivos óbvios (ex: poste com "CBD" na sigla)
         keywords_cannabis = ["canabidiol", "cannabis", "cbd", "cannabidiol", "thc", "cânhamo", "extrato medicinal"]
         if "descricao" in df.columns:
             mask = df["descricao"].str.lower().apply(
@@ -101,21 +95,15 @@ def carregar_itens():
 
 
 def processar_dados(df_editais, df_itens):
-    """
-    Faz o JOIN entre editais e itens, calcula status e prazo.
-    Retorna o dataframe principal enriquecido.
-    """
     if df_editais.empty:
         return pd.DataFrame()
 
     hoje = datetime.now()
 
-    # Datas
     df_editais["dt_fim"] = pd.to_datetime(df_editais["data_fim"], errors="coerce")
     df_editais["dt_inicio"] = pd.to_datetime(df_editais["data_inicio"], errors="coerce")
     df_editais["dt_pub"] = pd.to_datetime(df_editais["data_publicacao"], errors="coerce")
 
-    # Status e prazo
     def calcular_status(row):
         if pd.isna(row["dt_fim"]):
             return "⚪ Sem data"
@@ -143,37 +131,32 @@ def processar_dados(df_editais, df_itens):
     df_editais["status"] = df_editais.apply(calcular_status, axis=1)
     df_editais["prazo"] = df_editais.apply(calcular_prazo_texto, axis=1)
 
-    # Link correto: remove "/compras/" do url_id → /compras/CNPJ/ANO/SEQ → CNPJ/ANO/SEQ
     def montar_link(url_id):
         if not url_id:
             return ""
         partes = str(url_id).strip("/").split("/")
-        # formato: compras/{cnpj}/{ano}/{seq}
         if len(partes) >= 4 and partes[0] == "compras":
             return f"https://pncp.gov.br/app/editais/{partes[1]}/{partes[2]}/{partes[3]}"
         return f"https://pncp.gov.br/app/editais{url_id}"
 
     df_editais["link_pncp"] = df_editais["url_id"].apply(montar_link)
 
-    # Datas formatadas para exibição
     df_editais["Abertura"] = df_editais["dt_inicio"].dt.strftime("%d/%m/%Y %H:%M").fillna("—")
     df_editais["Encerramento"] = df_editais["dt_fim"].dt.strftime("%d/%m/%Y %H:%M").fillna("—")
     df_editais["Publicação"] = df_editais["dt_pub"].dt.strftime("%d/%m/%Y").fillna("—")
 
-    # JOIN com itens — agrega por edital
+    # JOIN com itens
     if not df_itens.empty and "edital_url_id" in df_itens.columns:
         agg = df_itens.groupby("edital_url_id").agg(
             qtd_total=("quantidade", "sum"),
             n_itens=("id", "count"),
             preco_unit_max=("valor_unitario", "max"),
             preco_unit_min=("valor_unitario", "min"),
-            # Produto: pega a descrição do item de maior quantidade
             _descricao_max_qtd=("descricao", lambda x: x.iloc[
                 df_itens.loc[x.index, "quantidade"].fillna(0).argmax()
             ] if len(x) > 0 else ""),
         ).reset_index()
         agg.rename(columns={"edital_url_id": "url_id"}, inplace=True)
-
         df = df_editais.merge(agg, on="url_id", how="left")
     else:
         df = df_editais.copy()
@@ -183,7 +166,6 @@ def processar_dados(df_editais, df_itens):
         df["preco_unit_min"] = None
         df["_descricao_max_qtd"] = ""
 
-    # Produto resumido: usa descrição do item ou objeto do edital como fallback
     def resumir_produto(row):
         desc = str(row.get("_descricao_max_qtd", "") or "")
         if desc and len(desc) > 5:
@@ -192,7 +174,6 @@ def processar_dados(df_editais, df_itens):
 
     df["produto"] = df.apply(resumir_produto, axis=1)
 
-    # Preço unitário formatado
     def formatar_preco(val):
         if pd.isna(val) or val is None:
             return "—"
@@ -200,10 +181,21 @@ def processar_dados(df_editais, df_itens):
 
     df["preco_unit_fmt"] = df["preco_unit_max"].apply(formatar_preco)
 
-    # Qtd formatada
     df["qtd_fmt"] = df["qtd_total"].apply(
         lambda x: f"{int(x):,}".replace(",", ".") if pd.notna(x) and x > 0 else "—"
     )
+
+    # Valor total formatado — usa valor_total_estimado do banco (correto após migração)
+    def formatar_valor_total(val):
+        try:
+            f = float(val)
+            if f <= 0:
+                return "—"
+            return f"R$ {f:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        except Exception:
+            return "—"
+
+    df["valor_total_fmt"] = df["valor_total_estimado"].apply(formatar_valor_total)
 
     return df
 
@@ -213,7 +205,6 @@ def processar_dados(df_editais, df_itens):
 st.title("🌿 Radar de Licitações — Cannabis Medicinal")
 st.caption("Monitoramento em tempo real de oportunidades no PNCP para a equipe comercial.")
 
-# Carrega dados
 with st.spinner("Carregando dados..."):
     df_editais = carregar_editais()
     df_itens = carregar_itens()
@@ -228,20 +219,16 @@ df = processar_dados(df_editais, df_itens)
 with st.sidebar:
     st.header("🔍 Filtros")
 
-    # Status
     status_opts = ["✅ Aberto", "⚠️ Urgente", "⚪ Sem data", "🔴 Encerrado"]
     status_default = ["✅ Aberto", "⚠️ Urgente", "⚪ Sem data"]
     status_sel = st.multiselect("Status", status_opts, default=status_default)
 
-    # UF
     ufs = sorted(df["uf"].dropna().unique().tolist())
     uf_sel = st.multiselect("Estado (UF)", ufs, default=[])
 
-    # Modalidade
     mods = sorted(df["modalidade"].dropna().unique().tolist())
     mod_sel = st.multiselect("Modalidade", mods, default=[])
 
-    # Busca textual
     busca = st.text_input("Buscar órgão ou produto:", placeholder="ex: Secretaria, Pregão...")
 
     st.divider()
@@ -263,6 +250,7 @@ if busca:
     mask = (
         df_f["orgao"].str.contains(busca, case=False, na=False) |
         df_f["produto"].str.contains(busca, case=False, na=False) |
+        df_f["objeto"].fillna("").str.contains(busca, case=False, na=False) |
         df_f["modalidade"].str.contains(busca, case=False, na=False)
     )
     df_f = df_f[mask]
@@ -275,14 +263,17 @@ total_editais = len(df_ativos)
 total_estados = df_ativos["uf"].nunique()
 urgentes = len(df_f[df_f["status"] == "⚠️ Urgente"])
 
-# Valor total: qtd × preço_unit quando ambos disponíveis
-df_ativos_val = df_ativos.copy()
-df_ativos_val["valor_calc"] = df_ativos_val["qtd_total"].fillna(0) * df_ativos_val["preco_unit_max"].fillna(0)
-valor_total = df_ativos_val["valor_calc"].sum()
+# Valor correto: usa valor_total_estimado do banco
+valor_total = df_ativos["valor_total_estimado"].fillna(0).astype(float).sum()
+
+def fmt_moeda(v):
+    if v <= 0:
+        return "—"
+    return f"R$ {v:,.0f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("📦 Frascos Solicitados", f"{int(total_frascos):,}".replace(",", "."))
-c2.metric("💰 Valor Estimado", f"R$ {valor_total:,.0f}".replace(",", "X").replace(".", ",").replace("X", ".") if valor_total > 0 else "—")
+c2.metric("💰 Valor Estimado", fmt_moeda(valor_total))
 c3.metric("📋 Editais Ativos", total_editais)
 c4.metric("🗺️ Estados", total_estados)
 c5.metric("⚠️ Urgentes (72h)", urgentes)
@@ -301,12 +292,14 @@ with aba1:
         st.markdown(f"### ⚠️ Atenção — {len(df_urgentes)} edital(is) encerram em menos de 72h")
         for _, row in df_urgentes.iterrows():
             link = row.get("link_pncp", "")
+            objeto_txt = str(row.get("objeto", "") or "").strip()
+            objeto_html = f'<br><span style="color:#aaa;font-size:12px">📝 {objeto_txt[:180]}</span>' if objeto_txt else ""
             st.markdown(f"""
 <div class="urgente-card">
   <div class="urgente-titulo">🔴 {row.get('prazo', '')} &nbsp;|&nbsp; {row.get('uf', '')} &nbsp;|&nbsp; {row.get('orgao', '')}</div>
   <div class="urgente-detalhe">
-    {row.get('produto', '—')[:100]}<br>
-    📦 {row.get('qtd_fmt', '—')} frascos &nbsp;|&nbsp; 💲 {row.get('preco_unit_fmt', '—')} unit &nbsp;|&nbsp;
+    {row.get('produto', '—')[:100]}{objeto_html}<br>
+    📦 {row.get('qtd_fmt', '—')} frascos &nbsp;|&nbsp; 💲 {row.get('preco_unit_fmt', '—')} unit &nbsp;|&nbsp; 💰 {row.get('valor_total_fmt', '—')} &nbsp;|&nbsp;
     <a href="{link}" target="_blank">Abrir Edital →</a>
   </div>
 </div>
@@ -316,56 +309,77 @@ with aba1:
     # Tabela principal
     st.markdown("### 📋 Lista de Oportunidades")
 
-    # Monta dataframe de exibição
     df_exib = df_f.copy()
-
-    # Coluna de link como HTML clicável
-    df_exib["Edital"] = df_exib.apply(
-        lambda r: f'<a href="{r["link_pncp"]}" target="_blank">Abrir ↗</a>' if r.get("link_pncp") else "—",
-        axis=1
-    )
-
-    # Ordenação padrão: urgentes primeiro, depois por data de encerramento
     ordem_status = {"⚠️ Urgente": 0, "✅ Aberto": 1, "⚪ Sem data": 2, "🔴 Encerrado": 3}
     df_exib["_ordem"] = df_exib["status"].map(ordem_status).fillna(9)
     df_exib = df_exib.sort_values(["_ordem", "dt_fim"], na_position="last")
 
     colunas_exib = {
-        "Publicação": "Publicação",
+        "dt_pub": "Publicação",
         "uf": "UF",
         "orgao": "Órgão",
         "modalidade": "Modalidade",
-        "produto": "Produto Solicitado",
-        "qtd_fmt": "Qtd.",
-        "preco_unit_fmt": "Preço Unit. (R$)",
+        "produto": "Produto",
+        "qtd_total": "Qtd.",
+        "preco_unit_max": "Preço Unit.",
+        "valor_total_estimado": "Valor Total",
         "prazo": "Prazo",
         "status": "Status",
+        "link_pncp": "Edital",
     }
 
-    df_tabela = df_exib.rename(columns=colunas_exib)[list(colunas_exib.values()) + ["link_pncp"]]
+    df_tabela = df_exib.rename(columns=colunas_exib)[list(colunas_exib.values())]
 
-    # Exibe com st.dataframe + coluna de link configurada
+    # Link direto na tabela — sem expander separado
     st.dataframe(
-        df_tabela.drop(columns=["link_pncp"]),
+        df_tabela,
         use_container_width=True,
         hide_index=True,
         column_config={
-            "Qtd.": st.column_config.TextColumn("Qtd.", width="small"),
-            "Preço Unit. (R$)": st.column_config.TextColumn("Preço Unit.", width="medium"),
+            "Publicação": st.column_config.DatetimeColumn(
+                "Publicação",
+                format="DD/MM/YYYY",
+                width="small",
+            ),
+            "Qtd.": st.column_config.NumberColumn(
+                "Qtd.",
+                format="%d",
+                width="small",
+            ),
+            "Preço Unit.": st.column_config.NumberColumn(
+                "Preço Unit.",
+                format="R$ %.2f",
+                width="medium",
+            ),
+            "Valor Total": st.column_config.NumberColumn(
+                "Valor Total",
+                format="R$ %.2f",
+                width="medium",
+            ),
+            "Edital": st.column_config.LinkColumn(
+                "Edital",
+                display_text="Abrir ↗",
+                width="small",
+            ),
             "Prazo": st.column_config.TextColumn("Prazo", width="medium"),
             "Status": st.column_config.TextColumn("Status", width="small"),
             "UF": st.column_config.TextColumn("UF", width="small"),
         }
     )
 
-    # Links separados abaixo da tabela (Streamlit não suporta HTML em dataframe)
-    with st.expander("🔗 Links dos Editais"):
+    # Expander com objeto completo
+    with st.expander("📝 Objeto completo dos editais"):
         for _, row in df_exib.iterrows():
-            if row.get("link_pncp"):
-                st.markdown(
-                    f"**{row.get('uf', '')} | {row.get('orgao', '')[:60]}** — "
-                    f"[Abrir no PNCP]({row['link_pncp']})"
-                )
+            objeto = str(row.get("objeto", "") or "").strip()
+            titulo = str(row.get("titulo", "") or "").strip()
+            link = row.get("link_pncp", "")
+            uf = row.get("uf", "")
+            orgao = str(row.get("orgao", "") or "")[:60]
+            texto = f"**{uf} | {orgao}** — {titulo}  \n📝 {objeto if objeto else '*(sem objeto cadastrado)*'}"
+            if link:
+                texto += f"  \n[Abrir no PNCP]({link})"
+            st.markdown(texto)
+            st.divider()
 
     st.caption(f"Exibindo {len(df_f)} editais. Clique no cabeçalho das colunas para ordenar.")
 
@@ -385,47 +399,75 @@ with aba2:
             st.markdown("#### Frascos por Estado (UF)")
             por_uf = (
                 df_anal.groupby("uf")["qtd_total"]
-                .sum()
-                .fillna(0)
-                .sort_values(ascending=False)
-                .reset_index()
+                .sum().fillna(0).sort_values(ascending=False).reset_index()
             )
             por_uf.columns = ["UF", "Frascos"]
             por_uf["Frascos"] = por_uf["Frascos"].astype(int)
             st.bar_chart(por_uf.set_index("UF"), color="#00cc88")
 
         with col2:
+            st.markdown("#### Valor Estimado por Estado (R$)")
+            por_uf_val = (
+                df_anal.groupby("uf")["valor_total_estimado"]
+                .sum().fillna(0).sort_values(ascending=False).reset_index()
+            )
+            por_uf_val.columns = ["UF", "Valor (R$)"]
+            st.bar_chart(por_uf_val.set_index("UF"), color="#ffaa00")
+
+        col3, col4 = st.columns(2)
+
+        with col3:
             st.markdown("#### Editais por Modalidade")
             por_mod = (
-                df_anal.groupby("modalidade")
-                .size()
-                .reset_index(name="Editais")
-                .sort_values("Editais", ascending=False)
+                df_anal.groupby("modalidade").size()
+                .reset_index(name="Editais").sort_values("Editais", ascending=False)
             )
             st.bar_chart(por_mod.set_index("modalidade"), color="#4488ff")
 
+        with col4:
+            st.markdown("#### Valor por Modalidade (R$)")
+            por_mod_val = (
+                df_anal.groupby("modalidade")["valor_total_estimado"]
+                .sum().fillna(0).sort_values(ascending=False).reset_index()
+            )
+            por_mod_val.columns = ["Modalidade", "Valor (R$)"]
+            st.bar_chart(por_mod_val.set_index("Modalidade"), color="#cc44ff")
+
         st.divider()
 
-        # Tabela de preços por produto (inteligência de mercado)
-        st.markdown("#### 💲 Referência de Preços — Itens com Valor Informado")
+        # Tabela de preços com contexto de mercado
+        st.markdown("#### 💲 Referência de Preços — Inteligência de Mercado")
+        st.caption("Preços unitários praticados por órgão público — base para precificação e proposta comercial.")
 
         if not df_itens.empty:
             df_preco = df_itens[df_itens["valor_unitario"].notna()].copy()
             df_preco = df_preco[df_preco["valor_unitario"] > 0]
 
             if not df_preco.empty:
-                df_preco_exib = df_preco[["descricao", "quantidade", "valor_unitario"]].copy()
-                df_preco_exib.columns = ["Produto", "Qtd", "Preço Unit. (R$)"]
-                df_preco_exib["Preço Unit. (R$)"] = df_preco_exib["Preço Unit. (R$)"].apply(
-                    lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                # JOIN com editais para trazer UF, órgão e data
+                df_meta = df[["url_id", "uf", "orgao", "dt_pub", "link_pncp"]].rename(
+                    columns={"url_id": "edital_url_id"}
                 )
-                df_preco_exib["Qtd"] = df_preco_exib["Qtd"].apply(
-                    lambda x: f"{int(x):,}".replace(",", ".") if pd.notna(x) else "—"
-                )
+                df_preco = df_preco.merge(df_meta, on="edital_url_id", how="left")
+
+                df_preco["Publicação"] = df_preco["dt_pub"]
+                df_preco = df_preco.rename(columns={
+                    "descricao": "Produto", "quantidade": "Qtd", "valor_unitario": "Preço Unit. (R$)",
+                    "uf": "UF", "orgao": "Órgão", "link_pncp": "Edital"
+                })
+
                 st.dataframe(
-                    df_preco_exib.sort_values("Produto"),
+                    df_preco[["Produto", "Qtd", "Preço Unit. (R$)", "UF", "Órgão", "Publicação", "Edital"]]
+                    .sort_values(["Produto", "Preço Unit. (R$)"]),
                     use_container_width=True,
-                    hide_index=True
+                    hide_index=True,
+                    column_config={
+                        "Qtd": st.column_config.NumberColumn("Qtd", format="%d", width="small"),
+                        "Preço Unit. (R$)": st.column_config.NumberColumn("Preço Unit. (R$)", format="R$ %.2f", width="medium"),
+                        "Publicação": st.column_config.DatetimeColumn("Publicação", format="DD/MM/YYYY", width="small"),
+                        "Edital": st.column_config.LinkColumn("Edital", display_text="Ver ↗", width="small"),
+                        "UF": st.column_config.TextColumn("UF", width="small"),
+                    }
                 )
             else:
                 st.info("Sem itens com preço informado.")
