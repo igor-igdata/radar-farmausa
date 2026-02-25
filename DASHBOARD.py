@@ -1,114 +1,115 @@
 import streamlit as st
 import requests
 import pandas as pd
+from datetime import datetime
 
 # 1. Configuração da Página
 st.set_page_config(page_title="Radar FarmaUSA - PNCP", page_icon="🌿", layout="wide")
 
-# 2. Credenciais do Supabase
+# 2. Credenciais (Seu Supabase)
 SUPABASE_URL = "https://clcaoyrqhkxirfekcxot.supabase.co"
 SUPABASE_KEY = "sb_publishable_4gTDfatSOwa5X4CJSnPRIQ_vBUJXb99"
 
 headers = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
-    "Content-Type": "application/json",
-    "Prefer": "return=minimal"
+    "Content-Type": "application/json"
 }
 
-# 3. Função para extrair e cruzar os dados com proteção contra falhas de rede
-@st.cache_data(ttl=300) # Mantém os dados em cache por 5 minutos
+@st.cache_data(ttl=60) # Atualiza a cada 1 minuto se houver F5
 def carregar_dados():
     try:
-        # Vai buscar os Editais (com limite de espera de 15 segundos)
-        url_editais = f"{SUPABASE_URL}/rest/v1/editais_pncp?select=*"
-        res_editais = requests.get(url_editais, headers=headers, timeout=15)
-        res_editais.raise_for_status() # Verifica se ocorreu algum erro na resposta
-        df_editais = pd.DataFrame(res_editais.json())
+        # Puxa os dados da sua tabela específica
+        url = f"{SUPABASE_URL}/rest/v1/editais_pncp?select=*"
+        res = requests.get(url, headers=headers, timeout=15)
+        res.raise_for_status()
+        df = pd.DataFrame(res.json())
         
-        # Vai buscar os Itens (com limite de espera de 15 segundos)
-        url_itens = f"{SUPABASE_URL}/rest/v1/itens_pncp?select=*"
-        res_itens = requests.get(url_itens, headers=headers, timeout=15)
-        res_itens.raise_for_status()
-        df_itens = pd.DataFrame(res_itens.json())
-        
-        if df_editais.empty or df_itens.empty:
+        if df.empty:
             return pd.DataFrame()
-            
-        # Cruza as duas tabelas (equivalente ao Relacionamento)
-        df_completo = pd.merge(df_itens, df_editais, left_on="edital_url_id", right_on="url_id", how="left")
+
+        # Tratamento das Datas (Crucial para o comercial)
+        # Convertemos as ISO Strings que o PNCP envia para objetos de data do Python
+        df['dt_fim_obj'] = pd.to_datetime(df['data_fim'], errors='coerce')
         
-        # Cria o link clicável
-        df_completo['Link_Direto'] = "https://pncp.gov.br/app/editais" + df_completo['url_id'].str.replace('/compras', '')
+        # Criamos versões bonitas para ler na tabela
+        df['Início Propostas'] = pd.to_datetime(df['data_inicio'], errors='coerce').dt.strftime('%d/%m/%Y %H:%M')
+        df['Fim Propostas'] = df['dt_fim_obj'].dt.strftime('%d/%m/%Y %H:%M')
         
-        # Formata a data (adicionado errors='coerce' para maior segurança)
-        df_completo['data_publicacao'] = pd.to_datetime(df_completo['data_publicacao'], errors='coerce').dt.strftime('%d/%m/%Y')
-        
-        return df_completo
-        
-    except requests.exceptions.Timeout:
-        # Mensagem amigável caso a rede demore muito
-        st.warning("⚠️ A rede demorou muito a responder. Tente atualizar a página.")
-        return pd.DataFrame()
+        return df
     except Exception as e:
-        # Proteção geral contra outros erros
-        st.error(f"⚠️ Erro ao ligar à base de dados: {e}")
+        st.error(f"Erro ao conectar com o banco: {e}")
         return pd.DataFrame()
+
+# --- TELA PRINCIPAL ---
+st.title("🏛️ Radar de Licitações - FarmaUSA")
 
 df = carregar_dados()
 
-# 4. Interface da Aplicação
-st.title("🏛️ Radar de Licitações - Cannabis Medicinal")
-st.markdown("Monitorização em tempo real de oportunidades no PNCP para a equipa comercial.")
-
 if not df.empty:
-    # --- Barra Lateral de Filtros ---
-    st.sidebar.header("Filtros de Pesquisa")
+    # Lógica de Status (Coração do Dashboard)
+    hoje = datetime.now()
     
-    estados_unicos = df['uf'].dropna().unique().tolist()
-    filtro_uf = st.sidebar.multiselect("Filtrar por Estado (UF):", estados_unicos, default=estados_unicos)
-    
-    modalidades_unicas = df['modalidade'].dropna().unique().tolist()
-    filtro_mod = st.sidebar.multiselect("Filtrar por Modalidade:", modalidades_unicas, default=modalidades_unicas)
-    
-    # Aplica os filtros
-    df_filtrado = df[(df['uf'].isin(filtro_uf)) & (df['modalidade'].isin(filtro_mod))]
-    
-    # --- Indicadores Chave (KPIs) ---
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Total de Frascos/Itens Solicitados", f"{df_filtrado['quantidade'].sum():,.0f}".replace(',', '.'))
-    with col2:
-        st.metric("Oportunidades (Editais)", len(df_filtrado['url_id'].unique()))
-    with col3:
-        st.metric("Estados Mapeados", len(df_filtrado['uf'].unique()))
+    def definir_status(row):
+        if pd.isna(row['dt_fim_obj']): 
+            return "⚪ Aguardando Robô" # Aparece antes de você rodar o LICITACAO.PY novo
         
-    st.divider()
+        # Calcula a diferença em horas
+        diff_horas = (row['dt_fim_obj'] - hoje).total_seconds() / 3600
+        
+        if diff_horas < 0:
+            return "🔴 Encerrado"
+        elif diff_horas <= 72: # Menos de 3 dias
+            return "⚠️ URGENTE (72h)"
+        else:
+            return "✅ Aberto"
+
+    df['Status'] = df.apply(definir_status, axis=1)
+
+    # Sidebar com Filtros
+    st.sidebar.header("Filtros de Busca")
+    status_opcoes = df['Status'].unique().tolist()
+    status_sel = st.sidebar.multiselect("Ver por Status:", status_opcoes, default=status_opcoes)
     
-    # --- Tabela de Oportunidades ---
-    st.subheader("📋 Lista de Oportunidades Abertas")
+    # Busca por Órgão ou Título
+    busca = st.sidebar.text_input("Buscar Órgão/Edital:")
+
+    # Aplicando filtros
+    df_filtrado = df[df['Status'].isin(status_sel)]
+    if busca:
+        df_filtrado = df_filtrado[
+            df_filtrado['orgao'].str.contains(busca, case=False, na=False) | 
+            df_filtrado['titulo'].str.contains(busca, case=False, na=False)
+        ]
+
+    # KPIs no topo
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total Encontrado", len(df_filtrado))
+    c2.metric("⚠️ Críticos (72h)", len(df[df['Status'] == "⚠️ URGENTE (72h)"]))
+    c3.metric("✅ Abertos", len(df[df['Status'] == "✅ Aberto"]))
+
+    # Alerta visual se houver urgência
+    if len(df[df['Status'] == "⚠️ URGENTE (72h)"]) > 0:
+        st.warning("⚠️ Atenção: Existem editais com prazo de encerramento muito próximo!")
+
+    # Tabela Final formatada
+    # Usamos o 'url_id' para criar o link clicável (opcional, mas profissional)
+    df_filtrado['Link PNCP'] = "https://pncp.gov.br/app/editais" + df_filtrado['url_id']
     
-    # Seleciona as colunas mais importantes para a equipa de vendas ler facilmente
-    colunas_visiveis = ['data_publicacao', 'uf', 'orgao', 'modalidade', 'descricao', 'quantidade', 'valor_unitario', 'Link_Direto']
-    df_exibicao = df_filtrado[colunas_visiveis].rename(columns={
-        'data_publicacao': 'Data',
-        'uf': 'UF',
-        'orgao': 'Órgão Comprador',
-        'modalidade': 'Modalidade',
-        'descricao': 'Produto Solicitado',
-        'quantidade': 'Qtd.',
-        'valor_unitario': 'Preço Teto (R$)'
-    })
+    # Seleção de colunas para exibição limpa
+    exibir = ['Status', 'Fim Propostas', 'orgao', 'titulo', 'uf', 'modalidade']
     
-    # Mostra a tabela com o link clicável
     st.dataframe(
-        df_exibicao,
-        column_config={
-            "Link_Direto": st.column_config.LinkColumn("Acesso ao PNCP", display_text="Abrir Edital 🔗"),
-            "Preço Teto (R$)": st.column_config.NumberColumn("Preço Teto (R$)", format="R$ %.2f")
-        },
-        hide_index=True,
-        use_container_width=True
+        df_filtrado[exibir].sort_values(by='Status', ascending=False),
+        use_container_width=True,
+        hide_index=True
     )
+    
+    st.caption("Dica: Clique no cabeçalho das colunas para ordenar por data ou órgão.")
+
 else:
-    st.info("A aguardar dados da base de dados...")
+    st.info("O banco de dados está vazio ou ainda sendo atualizado pelo robô.")
+
+# Rodapé
+st.divider()
+st.markdown(f"**Data Specialist:** Igor Souza | **Última Atualização:** {datetime.now().strftime('%d/%m/%Y %H:%M')}")
