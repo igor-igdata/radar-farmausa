@@ -5,7 +5,7 @@ from datetime import datetime
 SUPABASE_URL = "https://clcaoyrqhkxirfekcxot.supabase.co"
 SUPABASE_KEY = "sb_publishable_4gTDfatSOwa5X4CJSnPRIQ_vBUJXb99"
 
-# Headers cruciais para o UPSERT (Merge) funcionar no Supabase
+# Headers cruciais para o UPSERT (Merge)
 HEADERS_SUPABASE = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
@@ -15,7 +15,6 @@ HEADERS_SUPABASE = {
 
 def executar_robo():
     # 1. Busca licitações de Cannabis no PNCP
-    # Filtramos por cannabis para ser certeiro
     url_pncp = "https://pncp.gov.br/api/pncp/v1/editais?pagina=1&termo=cannabis"
     
     print(f"[{datetime.now().strftime('%H:%M:%S')}] Acessando PNCP...")
@@ -49,18 +48,20 @@ def executar_robo():
             "data_fim": licitacao.get('dataEncerramentoPropostas')
         }
 
-        # Faz o POST. Graças ao Header 'merge-duplicates', o Supabase
-        # vai apenas atualizar as colunas de data onde o url_id já existir.
+        # 2. Envio para o Supabase
+        # AQUI ESTÁ A MÁGICA: ?on_conflict=url_id avisa o banco exatamente onde comparar
+        url_post = f"{SUPABASE_URL}/rest/v1/editais_pncp?on_conflict=url_id"
+        
         res = requests.post(
-            f"{SUPABASE_URL}/rest/v1/editais_pncp", 
+            url_post, 
             headers=HEADERS_SUPABASE, 
             json=dados_supabase
         )
 
-        if res.status_code in [200, 201]:
-            print(f"✔️ Processado: {url_id}")
+        if res.status_code in [200, 201, 204]:
+            print(f"✔️ Sucesso (Upsert): {url_id}")
         else:
-            print(f"⚠️ Atenção em {url_id}: Status {res.status_code}")
+            print(f"⚠️ Erro em {url_id}: Status {res.status_code} - {res.text}")
 
     print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Banco de dados atualizado com sucesso!")
 
