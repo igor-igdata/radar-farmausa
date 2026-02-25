@@ -1,19 +1,22 @@
 """
-PREENCHER DATAS - Radar FarmaUSA
-=================================
-Percorre TODOS os registros da tabela editais_pncp no Supabase
+PREENCHER DATAS - Radar FarmaUSA (v2 - CORRIGIDO)
+===================================================
+Percorre registros da tabela editais_pncp no Supabase
 que estejam com data_inicio OU data_fim vazios,
 busca as datas na API do PNCP e faz UPDATE.
 
-O url_id tem o formato: /compras/{cnpj}/{ano}/{sequencial}
-A API de consulta individual: GET /api/pncp/v1/orgaos/{cnpj}/compras/{ano}/{sequencial}
-Retorna: dataAberturaProposta, dataEncerramentoProposta
+CORREÇÃO v2: 
+- Segue redirects corretamente (allow_redirects=True)
+- Tenta múltiplos endpoints da API do PNCP
+- Busca campos alternativos para datas
+- Log de debug nos primeiros registros para diagnóstico
 """
 
 import os
 import requests
 import time
 import logging
+import json
 
 # ================= LOGGING =================
 logging.basicConfig(
@@ -35,12 +38,14 @@ SUPABASE_HEADERS = {
 
 TABELA = "editais_pncp"
 
+# Headers para simular navegador (PNCP pode bloquear requests sem User-Agent)
+PNCP_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Accept": "application/json",
+}
+
 
 def buscar_registros_sem_datas():
-    """
-    Busca todos os registros que têm data_inicio OU data_fim nulos.
-    Pagina de 100 em 100 para não perder nenhum.
-    """
     endpoint = f"{SUPABASE_URL}/rest/v1/{TABELA}"
     todos = []
     offset = 0
@@ -51,49 +56,9 @@ def buscar_registros_sem_datas():
         headers["Range"] = f"{offset}-{offset + limite - 1}"
         headers["Prefer"] = "count=exact"
 
-        # Filtro: data_inicio IS NULL ou data_fim IS NULL
         params = {
             "select": "url_id,data_inicio,data_fim",
             "or": "(data_inicio.is.null,data_fim.is.null)",
-            "order": "data_publicacao.asc",
-        }
-
-        r = requests.get(endpoint, headers=headers, params=params, timeout=15)
-
-        if r.status_code == 200:
-            dados = r.json()
-            if not dados:
-                break
-            todos.extend(dados)
-            log.info(f"  Carregados {len(todos)} registros...")
-            if len(dados) < limite:
-                break
-            offset += limite
-        elif r.status_code == 416:
-            # Range not satisfiable = não há mais dados
-            break
-        else:
-            log.error(f"Erro ao buscar registros: {r.status_code} - {r.text[:300]}")
-            break
-
-    return todos
-
-
-def buscar_todos_registros():
-    """
-    Alternativa: busca TODOS os registros (caso queira atualizar mesmo os que já têm data).
-    """
-    endpoint = f"{SUPABASE_URL}/rest/v1/{TABELA}"
-    todos = []
-    offset = 0
-    limite = 100
-
-    while True:
-        headers = SUPABASE_HEADERS.copy()
-        headers["Range"] = f"{offset}-{offset + limite - 1}"
-
-        params = {
-            "select": "url_id,data_inicio,data_fim",
             "order": "data_publicacao.asc",
         }
 
@@ -118,12 +83,7 @@ def buscar_todos_registros():
 
 
 def extrair_cnpj_ano_seq(url_id):
-    """
-    Extrai cnpj, ano e sequencial do url_id.
-    Formato esperado: /compras/{cnpj}/{ano}/{sequencial}
-    """
     partes = url_id.strip("/").split("/")
-    # partes = ["compras", "cnpj", "ano", "sequencial"]
     if len(partes) >= 4 and partes[0] == "compras":
         return partes[1], partes[2], partes[3]
     else:
@@ -131,53 +91,126 @@ def extrair_cnpj_ano_seq(url_id):
         return None, None, None
 
 
-def buscar_datas_pncp(cnpj, ano, sequencial):
+def extrair_datas_do_json(dados):
     """
-    Consulta a API de detalhe da compra no PNCP.
-    GET https://pncp.gov.br/api/pncp/v1/orgaos/{cnpj}/compras/{ano}/{sequencial}
-    Retorna (data_inicio, data_fim) ou (None, None).
+    Tenta extrair datas de múltiplos campos possíveis.
     """
-    url = f"https://pncp.gov.br/api/pncp/v1/orgaos/{cnpj}/compras/{ano}/{sequencial}"
+    campos_inicio = [
+        "dataAberturaProposta",
+        "dataAberturaPropostas", 
+        "dataInicioProposta",
+        "dataInicioRecebimentoPropostas",
+        "dataInicio",
+        "dataInicioVigencia",
+        "dataAbertura",
+    ]
+    
+    campos_fim = [
+        "dataEncerramentoProposta",
+        "dataEncerramentoPropostas",
+        "dataFimProposta",
+        "dataFimRecebimentoPropostas",
+        "dataFim",
+        "dataFimVigencia",
+        "dataEncerramento",
+    ]
+    
+    data_inicio = None
+    data_fim = None
+    
+    for campo in campos_inicio:
+        val = dados.get(campo)
+        if val:
+            data_inicio = val
+            break
+    
+    for campo in campos_fim:
+        val = dados.get(campo)
+        if val:
+            data_fim = val
+            break
+    
+    return data_inicio, data_fim
 
-    try:
-        r = requests.get(url, timeout=15)
 
-        if r.status_code == 200:
-            dados = r.json()
-            data_inicio = dados.get("dataAberturaProposta")
-            data_fim = dados.get("dataEncerramentoProposta")
-            return data_inicio, data_fim
-
-        elif r.status_code == 301:
-            # Algumas rotas redirecionam - tentar seguir
-            log.warning(f"  301 para {cnpj}/{ano}/{sequencial} - tentando consulta API")
-            # Tenta a API de consulta pública como alternativa
-            url_alt = f"https://pncp.gov.br/api/consulta/v1/contratacoes/{cnpj}/{ano}/{sequencial}"
-            r2 = requests.get(url_alt, timeout=15)
-            if r2.status_code == 200:
-                dados = r2.json()
-                return dados.get("dataAberturaProposta"), dados.get("dataEncerramentoProposta")
-            return None, None
-
-        elif r.status_code == 404:
-            log.warning(f"  404 - Não encontrado: {cnpj}/{ano}/{sequencial}")
-            return None, None
-        else:
-            log.warning(f"  HTTP {r.status_code} para {cnpj}/{ano}/{sequencial}")
-            return None, None
-
-    except requests.exceptions.Timeout:
-        log.warning(f"  Timeout: {cnpj}/{ano}/{sequencial}")
-        return None, None
-    except Exception as e:
-        log.error(f"  Erro: {cnpj}/{ano}/{sequencial} - {e}")
-        return None, None
+def buscar_datas_pncp(cnpj, ano, sequencial, debug=False):
+    """
+    Consulta a API do PNCP tentando múltiplos endpoints.
+    """
+    endpoints = [
+        f"https://pncp.gov.br/api/pncp/v1/orgaos/{cnpj}/compras/{ano}/{sequencial}",
+        f"https://pncp.gov.br/api/consulta/v1/contratacoes/{cnpj}/{ano}/{sequencial}",
+    ]
+    
+    for i, url in enumerate(endpoints):
+        try:
+            r = requests.get(
+                url, 
+                headers=PNCP_HEADERS, 
+                timeout=15, 
+                allow_redirects=True
+            )
+            
+            if debug:
+                log.info(f"  [DEBUG] Endpoint {i+1}: {url}")
+                log.info(f"  [DEBUG] Status: {r.status_code} | Final URL: {r.url}")
+                if r.history:
+                    log.info(f"  [DEBUG] Redirects: {len(r.history)} hops")
+                if r.status_code == 200:
+                    try:
+                        dados = r.json()
+                        if isinstance(dados, dict):
+                            # Mostra campos que contêm 'data' no nome
+                            data_fields = {k: v for k, v in dados.items() if 'ata' in k.lower()}
+                            log.info(f"  [DEBUG] Campos com 'data': {json.dumps(data_fields, default=str)[:800]}")
+                            # Mostra todas as chaves
+                            log.info(f"  [DEBUG] Todas as chaves: {list(dados.keys())[:30]}")
+                        elif isinstance(dados, list):
+                            log.info(f"  [DEBUG] Retornou lista com {len(dados)} itens")
+                            if dados:
+                                data_fields = {k: v for k, v in dados[0].items() if 'ata' in k.lower()}
+                                log.info(f"  [DEBUG] Campos[0] com 'data': {json.dumps(data_fields, default=str)[:800]}")
+                        else:
+                            log.info(f"  [DEBUG] Tipo inesperado: {type(dados).__name__}")
+                    except Exception as e:
+                        log.info(f"  [DEBUG] Não é JSON: {r.text[:200]}")
+                else:
+                    # Mostra o que veio mesmo quando não é 200
+                    content_type = r.headers.get('Content-Type', '')
+                    log.info(f"  [DEBUG] Content-Type: {content_type}")
+                    if 'json' in content_type or 'text' in content_type:
+                        log.info(f"  [DEBUG] Body: {r.text[:300]}")
+            
+            if r.status_code == 200:
+                try:
+                    dados = r.json()
+                except:
+                    continue
+                
+                if isinstance(dados, dict):
+                    data_inicio, data_fim = extrair_datas_do_json(dados)
+                    if data_inicio or data_fim:
+                        return data_inicio, data_fim
+                elif isinstance(dados, list) and len(dados) > 0:
+                    data_inicio, data_fim = extrair_datas_do_json(dados[0])
+                    if data_inicio or data_fim:
+                        return data_inicio, data_fim
+            
+        except requests.exceptions.Timeout:
+            if debug:
+                log.info(f"  [DEBUG] Timeout endpoint {i+1}")
+            continue
+        except Exception as e:
+            if debug:
+                log.info(f"  [DEBUG] Erro endpoint {i+1}: {e}")
+            continue
+        
+        time.sleep(0.2)
+    
+    return None, None
 
 
 def atualizar_supabase(url_id, data_inicio, data_fim):
-    """
-    Faz PATCH no registro do Supabase para atualizar as datas.
-    """
     endpoint = f"{SUPABASE_URL}/rest/v1/{TABELA}"
 
     payload = {}
@@ -192,7 +225,6 @@ def atualizar_supabase(url_id, data_inicio, data_fim):
     headers = SUPABASE_HEADERS.copy()
     headers["Prefer"] = "return=minimal"
 
-    # URL-encode do url_id para o filtro
     r = requests.patch(
         f"{endpoint}?url_id=eq.{requests.utils.quote(url_id, safe='')}",
         headers=headers,
@@ -209,20 +241,11 @@ def atualizar_supabase(url_id, data_inicio, data_fim):
 
 def main():
     log.info("=" * 60)
-    log.info("📅 PREENCHIMENTO DE DATAS - editais_pncp")
+    log.info("📅 PREENCHIMENTO DE DATAS - editais_pncp (v2)")
     log.info("=" * 60)
 
-    # ========================================
-    # OPÇÃO 1: Só os que faltam datas (padrão)
-    # ========================================
     log.info("Buscando registros sem data_inicio ou data_fim...")
     registros = buscar_registros_sem_datas()
-
-    # ========================================
-    # OPÇÃO 2: Descomentar para rodar TODOS
-    # ========================================
-    # log.info("Buscando TODOS os registros...")
-    # registros = buscar_todos_registros()
 
     if not registros:
         log.info("✅ Todos os registros já possuem datas! Nada a fazer.")
@@ -244,8 +267,10 @@ def main():
             erros += 1
             continue
 
-        # Buscar datas na API do PNCP
-        data_inicio, data_fim = buscar_datas_pncp(cnpj, ano, seq)
+        # Debug detalhado nos primeiros 3 registros
+        debug = (i <= 3)
+
+        data_inicio, data_fim = buscar_datas_pncp(cnpj, ano, seq, debug=debug)
 
         if data_inicio or data_fim:
             log.info(f"  ✅ Início: {data_inicio or 'N/A'} | Fim: {data_fim or 'N/A'}")
@@ -257,7 +282,6 @@ def main():
             log.info(f"  ⚠️ Sem datas disponíveis na API")
             sem_dados += 1
 
-        # Rate limiting: 0.4s entre requests (max ~150/min)
         time.sleep(0.4)
 
     log.info("=" * 60)
