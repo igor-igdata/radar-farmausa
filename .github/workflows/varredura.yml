@@ -1,0 +1,30 @@
+name: Varredura Histórica 30 Dias (Rodar 1x)
+
+on:
+  workflow_dispatch: # Só manual — nunca roda automaticamente
+
+jobs:
+  varredura:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60  # Varredura de 30 dias pode demorar bastante
+
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      # Telegram não é usado na varredura — banco só
+
+    steps:
+      - name: Puxar os arquivos do repositório
+        uses: actions/checkout@v4
+
+      - name: Instalar o Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Instalar bibliotecas necessárias
+        run: pip install pandas requests
+
+      - name: Rodar Varredura Histórica
+        run: python LICITACAO_VARREDURA.PY
