@@ -36,7 +36,7 @@ def executar_robo():
         # Monta o url_id exatamente como está no seu banco
         url_id = f"/compras/{cnpj}/{ano}/{seq}"
         
-        # Prepara o pacote de dados com as novas colunas de data
+        # Prepara o pacote de dados com as chaves CORRETAS do PNCP (sem o "s" no final)
         dados_supabase = {
             "url_id": url_id, 
             "titulo": licitacao.get('numeroEdital'),
@@ -44,12 +44,11 @@ def executar_robo():
             "uf": licitacao.get('uf'),
             "modalidade": licitacao.get('modalidadeNome'),
             "data_publicacao": licitacao.get('dataPublicacaoPncp'),
-            "data_inicio": licitacao.get('dataAberturaPropostas'),
-            "data_fim": licitacao.get('dataEncerramentoPropostas')
+            "data_inicio": licitacao.get('dataAberturaProposta'),      # <--- CORRIGIDO
+            "data_fim": licitacao.get('dataEncerramentoProposta')       # <--- CORRIGIDO
         }
 
-        # 2. Envio para o Supabase
-        # AQUI ESTÁ A MÁGICA: ?on_conflict=url_id avisa o banco exatamente onde comparar
+        # 2. Envio para o Supabase (Upsert Inteligente)
         url_post = f"{SUPABASE_URL}/rest/v1/editais_pncp?on_conflict=url_id"
         
         res = requests.post(
