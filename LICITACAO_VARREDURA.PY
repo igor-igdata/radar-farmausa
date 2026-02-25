@@ -8,7 +8,8 @@ ficou fora do banco de dados antes de ativar o monitoramento diário.
 
 Diferenças em relação ao LICITACAO.PY de produção:
 - DIAS_RETROATIVOS = 30
-- Filtra por keyword nos ITENS de cada contratação (não só no objetoCompra)
+- Pregão/Dispensa/Inexigibilidade: filtra por keyword nos ITENS também
+- Concorrência/outros: filtra só pelo objetoCompra (itens raramente cadastrados)
 - SEM envio de Telegram (só popula o banco silenciosamente)
 - Pausa maior entre chamadas para não sobrecarregar a API do PNCP
 - Timeout maior (30s) para aguentar a carga de 30 dias
@@ -63,7 +64,13 @@ PAUSA_ENTRE_ITENS = 0.6
 PAUSA_ENTRE_PAGINAS = 0.5
 PAUSA_ENTRE_MODALIDADES = 1.0
 
-MODALIDADES = [4, 5, 6, 7, 8, 9, 11, 13]
+# Pregão (6), Dispensa (8), Inexigibilidade (9):
+#   itens geralmente cadastrados no PNCP → vale buscar itens de todas
+# Concorrência (4,5), Pregão Presencial (7), Credenciamento (11), IRP (13):
+#   itens raramente cadastrados → filtrar só pelo objetoCompra (evita centenas de 404)
+MODALIDADES_COM_ITENS = [6, 8, 9]
+MODALIDADES_SO_OBJETO = [4, 5, 7, 11, 13]
+MODALIDADES = MODALIDADES_COM_ITENS + MODALIDADES_SO_OBJETO
 
 
 # ================= UTILITÁRIOS =================
@@ -133,11 +140,11 @@ def buscar_itens(cnpj, ano, seq):
                 num = item.get("numeroItem", "-")
                 qtd_raw = item.get("quantidade", 0)
                 vlr_unit = item.get("valorUnitarioEstimado")
-                vlr_total = item.get("valorTotalEstimado")
+                vlr_total_item = item.get("valorTotalEstimado")
 
-                if vlr_total:
+                if vlr_total_item:
                     try:
-                        valor_total += float(vlr_total)
+                        valor_total += float(vlr_total_item)
                     except Exception:
                         pass
                 elif vlr_unit and qtd_raw:
@@ -151,11 +158,13 @@ def buscar_itens(cnpj, ano, seq):
                     "descricao": str(desc)[:500],
                     "quantidade": float(qtd_raw) if qtd_raw else 0.0,
                     "valor_unitario": float(vlr_unit) if vlr_unit else None,
-                    "valor_total": float(vlr_total) if vlr_total else None,
+                    "valor_total": float(vlr_total_item) if vlr_total_item else None,
                 })
 
         elif r.status_code == 204:
-            pass  # sem itens
+            pass  # sem itens cadastrados
+        elif r.status_code == 404:
+            pass  # edital sem itens no PNCP (normal para algumas modalidades)
         else:
             log.warning(f"  Itens API {r.status_code} para {cnpj}/{ano}/{seq}")
 
@@ -192,7 +201,7 @@ def buscar_contratacoes_pagina(data_inicial, data_final, modalidade, pagina=1):
         return []
 
 
-def buscar_todas_contratacoes_do_dia(data_ini_str, data_fim_str, modalidade):
+def buscar_todas_contratacoes(data_ini_str, data_fim_str, modalidade):
     """Busca todas as páginas de uma modalidade no período."""
     todas = []
     pagina = 1
@@ -220,10 +229,6 @@ def salvar_supabase(dados_edital, dados_itens):
     Não envia Telegram — só popula o banco.
     """
     url_id = dados_edital["url_id"]
-
-    # Remove campos auxiliares antes de salvar
-    edital_limpo = {k: v for k, v in dados_edital.items() if not k.startswith("_")}
-
     endpoint_editais = f"{SUPABASE_URL}/rest/v1/editais_pncp"
     endpoint_itens = f"{SUPABASE_URL}/rest/v1/itens_pncp"
 
@@ -250,7 +255,7 @@ def salvar_supabase(dados_edital, dados_itens):
         res = requests.post(
             f"{endpoint_editais}?on_conflict=url_id",
             headers=headers_upsert,
-            json=edital_limpo,
+            json=dados_edital,
             timeout=10
         )
         if res.status_code not in [200, 201, 204]:
@@ -274,12 +279,12 @@ def salvar_supabase(dados_edital, dados_itens):
 
 # ================= PROCESSAMENTO =================
 
-def processar_contratacao(item, total_processadas, total_geral):
+def processar_contratacao(item, idx, total, buscar_itens_flag=True):
     """
     Processa uma contratação:
-    1. Verifica keyword no objeto OU nos itens
-    2. Se encontrar cannabis → salva no banco
-    3. Sem Telegram
+    - buscar_itens_flag=True  (Pregão, Dispensa): filtra por objeto OU por itens
+    - buscar_itens_flag=False (Concorrência etc.): filtra só pelo objeto
+    Sem Telegram — só popula o banco.
     """
     cnpj = item.get("orgaoEntidade", {}).get("cnpj", "")
     ano = item.get("anoCompra")
@@ -291,15 +296,24 @@ def processar_contratacao(item, total_processadas, total_geral):
     objeto = item.get("objetoCompra", "")
     match_objeto = keyword_match(objeto)
 
-    # Busca itens de qualquer forma para verificar cannabis
-    itens_banco, valor_itens, match_itens = buscar_itens(cnpj, ano, seq)
-    time.sleep(PAUSA_ENTRE_ITENS)
+    itens_banco = []
+    valor_itens = 0.0
+    match_itens = False
+
+    if buscar_itens_flag:
+        # Busca itens — pode ter cannabis mesmo sem mencionar no objeto
+        itens_banco, valor_itens, match_itens = buscar_itens(cnpj, ano, seq)
+        time.sleep(PAUSA_ENTRE_ITENS)
+    else:
+        # Modalidades que raramente cadastram itens: só checa objeto
+        if not match_objeto:
+            return False
 
     if not match_objeto and not match_itens:
         return False
 
     origem = "objeto" if match_objeto else "itens"
-    log.info(f"  🎯 [{total_processadas}/{total_geral}] Match via {origem}: {objeto[:70]}...")
+    log.info(f"  🎯 [{idx}/{total}] Match via {origem}: {objeto[:70]}...")
 
     url_id = f"/compras/{cnpj}/{ano}/{seq}"
 
@@ -368,8 +382,8 @@ def main():
 
     log.info(f"📅 Período: {data_ini.strftime('%d/%m/%Y')} a {hoje.strftime('%d/%m/%Y')}")
     log.info(f"🔑 Keywords: {', '.join(KEYWORDS)}")
-    log.info(f"📊 Modalidades: {MODALIDADES}")
-    log.info("⚠️  Buscando itens de TODAS as contratações (mais lento, mais completo)")
+    log.info(f"📈 Modalidades com busca de itens: {MODALIDADES_COM_ITENS}")
+    log.info(f"📋 Modalidades só por objeto:      {MODALIDADES_SO_OBJETO}")
     log.info("=" * 60)
 
     total_analisadas = 0
@@ -377,16 +391,19 @@ def main():
     total_novas = 0
 
     for modalidade in MODALIDADES:
-        log.info(f"\n--- Modalidade {modalidade} ---")
-        contratacoes = buscar_todas_contratacoes_do_dia(data_ini_str, data_fim_str, modalidade)
+        com_itens = modalidade in MODALIDADES_COM_ITENS
+        estrategia = "objeto+itens" if com_itens else "só objeto"
+        log.info(f"\n--- Modalidade {modalidade} ({estrategia}) ---")
+
+        contratacoes = buscar_todas_contratacoes(data_ini_str, data_fim_str, modalidade)
         log.info(f"  📄 {len(contratacoes)} contratações encontradas")
         total_analisadas += len(contratacoes)
 
         for i, item in enumerate(contratacoes, 1):
-            novo = processar_contratacao(item, i, len(contratacoes))
-            if novo is not False:  # achou cannabis
+            resultado = processar_contratacao(item, i, len(contratacoes), buscar_itens_flag=com_itens)
+            if resultado is not False:
                 total_cannabis += 1
-                if novo:
+                if resultado:
                     total_novas += 1
 
         time.sleep(PAUSA_ENTRE_MODALIDADES)
