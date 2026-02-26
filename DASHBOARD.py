@@ -316,8 +316,11 @@ with aba1:
     df_exib["_ordem"] = df_exib["status"].map(ordem_status).fillna(9)
     df_exib = df_exib.sort_values(["_ordem", "dt_fim"], na_position="last")
 
+    # Converter datas para string formatada (evita bug do DatetimeColumn no Streamlit)
+    df_exib["pub_fmt"] = df_exib["dt_pub"].dt.strftime("%d/%m/%Y").fillna("—")
+
     colunas_exib = {
-        "dt_pub": "Publicação",
+        "pub_fmt": "Publicação",
         "uf": "UF",
         "orgao": "Órgão",
         "modalidade": "Modalidade",
@@ -338,9 +341,8 @@ with aba1:
         use_container_width=True,
         hide_index=True,
         column_config={
-            "Publicação": st.column_config.DatetimeColumn(
+            "Publicação": st.column_config.TextColumn(
                 "Publicação",
-                format="DD/MM/YYYY",
                 width="small",
             ),
             "Qtd.": st.column_config.NumberColumn(
@@ -452,7 +454,7 @@ with aba2:
                 )
                 df_preco = df_preco.merge(df_meta, on="edital_url_id", how="left")
 
-                df_preco["Publicação"] = df_preco["dt_pub"]
+                df_preco["Publicação"] = df_preco["dt_pub"].dt.strftime("%d/%m/%Y").fillna("—")
                 df_preco = df_preco.rename(columns={
                     "descricao": "Produto", "quantidade": "Qtd", "valor_unitario": "Preço Unit. (R$)",
                     "uf": "UF", "orgao": "Órgão", "link_pncp": "Edital"
@@ -466,7 +468,7 @@ with aba2:
                     column_config={
                         "Qtd": st.column_config.NumberColumn("Qtd", format="%d", width="small"),
                         "Preço Unit. (R$)": st.column_config.NumberColumn("Preço Unit. (R$)", format="R$ %.2f", width="medium"),
-                        "Publicação": st.column_config.DatetimeColumn("Publicação", format="DD/MM/YYYY", width="small"),
+                        "Publicação": st.column_config.TextColumn("Publicação", width="small"),
                         "Edital": st.column_config.LinkColumn("Edital", display_text="Ver ↗", width="small"),
                         "UF": st.column_config.TextColumn("UF", width="small"),
                     }
