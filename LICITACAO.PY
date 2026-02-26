@@ -56,6 +56,28 @@ KEYWORDS = [
     "thc", "cânhamo", "marijuana", "maconha medicinal"
 ]
 
+# Termos que indicam que o edital NÃO é farmacêutico mesmo tendo keyword cannabis
+# Ex: equipamentos médicos com marca "Cannabis", serviços não relacionados
+BLOCKLIST_CONTEXTO = [
+    "assistência técnica",
+    "manutenção preventiva",
+    "manutenção corretiva",
+    "coffee break",
+    "vale-transporte",
+    "vale transporte",
+    "bilhete digital",
+    "serviços de limpeza",
+    "material de escritório",
+    "combustível",
+]
+
+def objeto_bloqueado(texto):
+    """Retorna True se o objeto claramente não é farmacêutico."""
+    if not texto:
+        return False
+    t = str(texto).lower()
+    return any(b in t for b in BLOCKLIST_CONTEXTO)
+
 PNCP_API_BASE = "https://pncp.gov.br/api/consulta/v1"
 
 DIAS_RETROATIVOS = 1
@@ -499,6 +521,11 @@ def processar_contratacao(item):
 
     # Pré-filtro: objeto deve conter keyword cannabis para justificar buscar itens
     if not keyword_match(objeto):
+        return False
+
+    # Blocklist: rejeitar objetos claramente não farmacêuticos
+    if objeto_bloqueado(objeto):
+        log.info(f"   🚫 Objeto bloqueado (contexto não farmacêutico): {objeto[:80]}")
         return False
 
     cnpj = item.get("orgaoEntidade", {}).get("cnpj", "")
