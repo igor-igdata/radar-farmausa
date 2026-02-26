@@ -71,7 +71,11 @@ KEYWORDS = [
 
 PNCP_API_BASE = "https://pncp.gov.br/api/consulta/v1"
 
-DIAS_RETROATIVOS = 1  # Busca hoje + ontem (cobre publicações da madrugada/virada)
+DIAS_RETROATIVOS = 7  # Temporário: popular banco retroativo
+
+# ⚠️ MODO RECUPERAÇÃO: True = salva no banco mas NÃO envia Telegram
+# Após rodar uma vez, voltar APENAS_POPULAR_BANCO = False e DIAS_RETROATIVOS = 1
+APENAS_POPULAR_BANCO = True
 
 # Modalidades: 4=Concorrência Eletrônica, 5=Concorrência Presencial,
 # 6=Pregão Eletrônico, 7=Pregão Presencial, 8=Dispensa,
@@ -579,8 +583,11 @@ def processar_contratacao(item):
     }
 
     if check_and_save_supabase(dados_edital, itens_banco):
-        modalidade_label = classificar_modalidade(modalidade_nome)
-        enviar_telegram(dados_edital, itens_texto, modalidade_label)
+        if APENAS_POPULAR_BANCO:
+            log.info(f"   📦 Salvo no banco (modo recuperação — Telegram suprimido)")
+        else:
+            modalidade_label = classificar_modalidade(modalidade_nome)
+            enviar_telegram(dados_edital, itens_texto, modalidade_label)
         return True
 
     return False
