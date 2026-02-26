@@ -4,20 +4,9 @@ RADAR FARMAUSA - Monitor de Licitações de Cannabis no PNCP (v2)
 Busca licitações publicadas no Portal Nacional de Contratações Públicas
 que contenham termos relacionados a cannabis/canabidiol no objeto da compra.
 
-Estratégia:
-- A API do PNCP NÃO tem busca por texto. Busca por data + modalidade.
-- Filtra pelo campo "objetoCompra" usando as keywords definidas.
-- Quando a API de listagem não retorna datas, busca no endpoint individual.
-- Salva no Supabase (upsert) e envia alerta no Telegram apenas para novos registros.
-
-Correções v2:
-- Endpoint de itens: /api/consulta/v1/orgaos/{cnpj}/compras/{ano}/{seq}/itens
-  (v1 usava /api/pncp/v1/... que retorna 301)
-- Busca de datas individuais quando a listagem retorna null
-- Link PNCP correto: /app/editais/{cnpj}/{ano}/{seq}  (sem /compras/ no meio)
-- Novo formato de mensagem Telegram: mais limpo, dias restantes, V. Unit em destaque
-- Qtd formatada sem .0 desnecessário
-- Valor sigiloso omitido em vez de exibir "Sigiloso/Não inf."
+Correções v3:
+- ATUALIZAR_DATAS: faz PATCH em registros existentes que estejam sem datas
+- Permite rodar modo recuperação para preencher histórico sem re-enviar Telegram
 """
 
 import os
@@ -41,7 +30,6 @@ CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 
-# Fallback local (remover em produção)
 if not TELEGRAM_BOT_TOKEN:
     TELEGRAM_BOT_TOKEN = "8388155318:AAGrSb4FwLvAS51PZG4tmnapkM2V7p0lTYk"
 if not CHAT_ID:
@@ -63,7 +51,6 @@ PNCP_HEADERS = {
     "Accept": "application/json",
 }
 
-# Keywords para filtrar no campo objetoCompra
 KEYWORDS = [
     "canabidiol", "cannabis", "cbd", "cannabidiol",
     "thc", "cânhamo", "marijuana", "maconha medicinal"
@@ -71,26 +58,30 @@ KEYWORDS = [
 
 PNCP_API_BASE = "https://pncp.gov.br/api/consulta/v1"
 
-DIAS_RETROATIVOS = 7  # Temporário: popular banco retroativo
+DIAS_RETROATIVOS = 1
 
-# ⚠️ MODO RECUPERAÇÃO: True = salva no banco mas NÃO envia Telegram
-# Após rodar uma vez, voltar APENAS_POPULAR_BANCO = False e DIAS_RETROATIVOS = 1
-APENAS_POPULAR_BANCO = True
+# ⚠️ MODO RECUPERAÇÃO:
+# - APENAS_POPULAR_BANCO = True  → salva no banco mas NÃO envia Telegram
+# - DATA_ESPECIFICA = "20260225" → processa só esse dia (formato YYYYMMDD)
+# - ATUALIZAR_DATAS = True       → faz PATCH em registros sem data_inicio/data_fim
+#
+# Para recuperar datas do histórico:
+#   1. Defina APENAS_POPULAR_BANCO = True, ATUALIZAR_DATAS = True
+#   2. Rode com DATA_ESPECIFICA = "20260101" (cada dia que quiser recuperar)
+#   3. Após terminar: APENAS_POPULAR_BANCO = False, DATA_ESPECIFICA = "", ATUALIZAR_DATAS = True
+#      (ATUALIZAR_DATAS = True pode ficar ligado permanentemente — não causa problemas)
+APENAS_POPULAR_BANCO = False
+DATA_ESPECIFICA = ""
+ATUALIZAR_DATAS = True  # Sempre atualiza datas faltantes (seguro manter True)
 
-# Modalidades: 4=Concorrência Eletrônica, 5=Concorrência Presencial,
-# 6=Pregão Eletrônico, 7=Pregão Presencial, 8=Dispensa,
-# 9=Inexigibilidade, 11=Credenciamento, 13=IRP
 MODALIDADES = [4, 5, 6, 7, 8, 9, 11, 13]
-
 TAMANHO_PAGINA = 50
-
 DASHBOARD_URL = "https://radar-farmausa.streamlit.app/"
 
 
 # ================= UTILITÁRIOS =================
 
 def formatar_data_br(data_iso):
-    """Converte ISO datetime para dd/mm/yyyy HH:MM."""
     if not data_iso:
         return None
     try:
@@ -101,12 +92,10 @@ def formatar_data_br(data_iso):
 
 
 def calcular_dias_restantes(data_fim_iso):
-    """Retorna (dias, horas) restantes até o encerramento. Negativo = encerrado."""
     if not data_fim_iso:
         return None, None
     try:
         dt = datetime.datetime.fromisoformat(data_fim_iso.replace("Z", "+00:00"))
-        # Remove timezone para comparar com datetime.now()
         if dt.tzinfo:
             dt = dt.replace(tzinfo=None)
         diff = dt - datetime.datetime.now()
@@ -119,7 +108,6 @@ def calcular_dias_restantes(data_fim_iso):
 
 
 def formatar_prazo(data_fim_iso):
-    """Retorna texto humanizado do prazo restante."""
     dias, horas = calcular_dias_restantes(data_fim_iso)
     if dias is None:
         return None
@@ -136,7 +124,6 @@ def formatar_prazo(data_fim_iso):
 
 
 def formatar_qtd(qtd):
-    """Formata quantidade sem casas decimais desnecessárias."""
     if qtd is None:
         return None
     try:
@@ -149,7 +136,6 @@ def formatar_qtd(qtd):
 
 
 def formatar_valor(val):
-    """Formata valor monetário em reais. Retorna None se sigiloso/ausente."""
     if val is None:
         return None
     try:
@@ -162,7 +148,6 @@ def formatar_valor(val):
 
 
 def keyword_match(texto):
-    """Verifica se alguma keyword aparece no texto (case insensitive)."""
     if not texto:
         return False
     texto_lower = str(texto).lower()
@@ -170,12 +155,10 @@ def keyword_match(texto):
 
 
 def montar_link_pncp(cnpj, ano, seq):
-    """Monta o link correto do PNCP para o edital."""
     return f"https://pncp.gov.br/app/editais/{cnpj}/{ano}/{seq}"
 
 
 def classificar_modalidade(modalidade_nome):
-    """Retorna emoji + label da modalidade para o Telegram."""
     if not modalidade_nome:
         return "📋 Licitação"
     mod = str(modalidade_nome).lower()
@@ -195,12 +178,6 @@ def classificar_modalidade(modalidade_nome):
 # ================= API PNCP =================
 
 def buscar_datas_individuais(cnpj, ano, seq):
-    """
-    Busca datas de abertura/encerramento no endpoint individual do edital.
-    Usado como fallback quando a listagem retorna datas nulas.
-
-    Endpoint correto: /api/consulta/v1/orgaos/{cnpj}/compras/{ano}/{seq}
-    """
     url = f"https://pncp.gov.br/api/consulta/v1/orgaos/{cnpj}/compras/{ano}/{seq}"
     try:
         r = requests.get(url, headers=PNCP_HEADERS, timeout=15, allow_redirects=True)
@@ -217,14 +194,6 @@ def buscar_datas_individuais(cnpj, ano, seq):
 
 
 def buscar_itens_relevantes(cnpj, ano, seq):
-    """
-    Busca itens de uma compra e filtra os relevantes por keyword.
-
-    Endpoint correto: /api/consulta/v1/orgaos/{cnpj}/compras/{ano}/{seq}/itens
-    (v1 usava /api/pncp/v1/... que retornava 301)
-
-    Retorna: (lista_itens_telegram, lista_itens_banco, valor_total_float)
-    """
     url = f"https://pncp.gov.br/api/consulta/v1/orgaos/{cnpj}/compras/{ano}/{seq}/itens"
     itens_texto = []
     itens_banco = []
@@ -252,7 +221,6 @@ def buscar_itens_relevantes(cnpj, ano, seq):
                 vlr_unit = item.get("valorUnitarioEstimado")
                 vlr_total = item.get("valorTotalEstimado")
 
-                # Acumula valor total (para salvar no edital)
                 if vlr_total:
                     try:
                         valor_total += float(vlr_total)
@@ -264,7 +232,6 @@ def buscar_itens_relevantes(cnpj, ano, seq):
                     except Exception:
                         pass
 
-                # Monta linha para o Telegram
                 qtd_fmt = formatar_qtd(qtd_raw)
                 unit_fmt = formatar_valor(vlr_unit)
                 total_fmt = formatar_valor(vlr_total)
@@ -293,7 +260,7 @@ def buscar_itens_relevantes(cnpj, ano, seq):
                 })
 
         elif r.status_code == 204:
-            pass  # sem itens
+            pass
         else:
             log.warning(f"Itens API retornou {r.status_code} para {cnpj}/{ano}/{seq}")
 
@@ -304,7 +271,6 @@ def buscar_itens_relevantes(cnpj, ano, seq):
 
 
 def buscar_contratacoes_pagina(data_inicial, data_final, modalidade, pagina=1):
-    """Consulta /v1/contratacoes/publicacao para uma página."""
     url = f"{PNCP_API_BASE}/contratacoes/publicacao"
     params = {
         "dataInicial": data_inicial,
@@ -331,7 +297,6 @@ def buscar_contratacoes_pagina(data_inicial, data_final, modalidade, pagina=1):
 
 
 def buscar_todas_contratacoes(data_inicial, data_final, modalidade):
-    """Busca todas as páginas de uma modalidade."""
     todas = []
     pagina = 1
     while True:
@@ -354,31 +319,57 @@ def buscar_todas_contratacoes(data_inicial, data_final, modalidade):
 def check_and_save_supabase(dados_edital, dados_itens):
     """
     Upsert do edital no Supabase.
-    Retorna True se NOVO (dispara Telegram), False se já existia.
+    - Registro NOVO: insere e retorna True (dispara Telegram)
+    - Já EXISTE: retorna False (não re-envia Telegram)
+      → Se ATUALIZAR_DATAS=True, faz PATCH das datas que estiverem nulas no banco
     """
     url_id = dados_edital["url_id"]
     endpoint_editais = f"{SUPABASE_URL}/rest/v1/editais_pncp"
     endpoint_itens = f"{SUPABASE_URL}/rest/v1/itens_pncp"
 
-    # Remove campos auxiliares que não existem na tabela (prefixo _)
+    # Remove campos auxiliares (prefixo _) que não existem na tabela
     dados_para_salvar = {k: v for k, v in dados_edital.items() if not k.startswith("_")}
 
-    # Verifica se já existe ANTES do upsert
-    is_new = True
+    # Verifica se já existe
     try:
         check = requests.get(
-            f"{endpoint_editais}?url_id=eq.{requests.utils.quote(url_id)}&select=url_id",
+            f"{endpoint_editais}?url_id=eq.{requests.utils.quote(url_id)}&select=url_id,data_inicio,data_fim,data_publicacao",
             headers=SUPABASE_HEADERS,
             timeout=10
         )
         if check.status_code == 200 and len(check.json()) > 0:
-            is_new = False
-            log.info(f"⏭️  Já existe no banco: {url_id}")
-            return False  # Não re-envia Telegram para registros existentes
+            registro = check.json()[0]
+
+            if ATUALIZAR_DATAS:
+                campos_atualizar = {}
+                if not registro.get("data_inicio") and dados_para_salvar.get("data_inicio"):
+                    campos_atualizar["data_inicio"] = dados_para_salvar["data_inicio"]
+                if not registro.get("data_fim") and dados_para_salvar.get("data_fim"):
+                    campos_atualizar["data_fim"] = dados_para_salvar["data_fim"]
+                if not registro.get("data_publicacao") and dados_para_salvar.get("data_publicacao"):
+                    campos_atualizar["data_publicacao"] = dados_para_salvar["data_publicacao"]
+
+                if campos_atualizar:
+                    patch = requests.patch(
+                        f"{endpoint_editais}?url_id=eq.{requests.utils.quote(url_id)}",
+                        headers={**SUPABASE_HEADERS, "Prefer": "return=minimal"},
+                        json=campos_atualizar,
+                        timeout=10
+                    )
+                    if patch.status_code in [200, 204]:
+                        log.info(f"📅 Datas atualizadas: {url_id} → {list(campos_atualizar.keys())}")
+                    else:
+                        log.warning(f"Erro PATCH datas: {patch.status_code} {patch.text[:200]}")
+                else:
+                    log.info(f"⏭️  Já existe com datas completas: {url_id}")
+            else:
+                log.info(f"⏭️  Já existe no banco: {url_id}")
+
+            return False  # Não re-envia Telegram
     except Exception as e:
         log.warning(f"Aviso ao verificar Supabase: {e}")
 
-    # Upsert edital — on_conflict no header Prefer (forma correta para Supabase)
+    # Novo registro — upsert
     headers_upsert = {**SUPABASE_HEADERS, "Prefer": "resolution=merge-duplicates,return=minimal"}
     try:
         res = requests.post(
@@ -395,7 +386,7 @@ def check_and_save_supabase(dados_edital, dados_itens):
         log.error(f"ERRO request Supabase ({url_id}): {e}")
         return False
 
-    # Insere itens do edital novo
+    # Insere itens
     if dados_itens:
         try:
             for item in dados_itens:
@@ -413,32 +404,12 @@ def check_and_save_supabase(dados_edital, dados_itens):
         except Exception as e:
             log.warning(f"Erro ao inserir itens: {e}")
 
-    return True  # É novo, dispara Telegram
+    return True
 
 
 # ================= TELEGRAM =================
 
 def enviar_telegram(edital, itens_texto, modalidade_label):
-    """
-    Envia alerta formatado no Telegram.
-
-    Formato:
-    🌿 NOVA LICITAÇÃO — CANNABIS MEDICINAL
-    📈 Pregão  |  SP • São Paulo
-    🏢 Secretaria de Estado da Saúde
-    📋 Edital nº 002/2026
-
-    💊 PRODUTO(S):
-    Item 1 — Canabidiol 200mg/ml frasco 30ml
-    📦 500 un. | 💲 R$ 659,24/un.
-
-    ⏱ PRAZOS:
-    🟢 Abertura:      24/02/2026 18:00
-    🔴 Encerramento:  05/03/2026 09:00  ← 8 dias restantes
-
-    🔗 Abrir Edital no PNCP
-    📊 Ver no Radar FarmaUSA
-    """
     cnpj = edital.get("_cnpj", "")
     ano = edital.get("_ano", "")
     seq = edital.get("_seq", "")
@@ -450,20 +421,17 @@ def enviar_telegram(edital, itens_texto, modalidade_label):
     orgao = edital.get("orgao", "N/A")
     titulo = edital.get("titulo", "N/A")
 
-    # Cabeçalho: modalidade | UF
     linha_local = f"{modalidade_label}  |  {uf}" if uf else modalidade_label
 
-    # Bloco de produtos
     bloco_produtos = ""
     if itens_texto:
         linhas = []
-        for it in itens_texto[:5]:  # máx 5 itens
+        for it in itens_texto[:5]:
             linhas.append(f"• Item {it['numero']} — {it['descricao'][:100]}")
             if it["linha"]:
                 linhas.append(f"  ↳ {it['linha']}")
         bloco_produtos = "\n\n💊 <b>PRODUTO(S):</b>\n" + "\n".join(linhas)
 
-    # Bloco de prazos
     dt_inicio_fmt = formatar_data_br(edital.get("data_inicio"))
     dt_fim_fmt = formatar_data_br(edital.get("data_fim"))
     prazo_txt = formatar_prazo(edital.get("data_fim"))
@@ -513,10 +481,6 @@ def enviar_telegram(edital, itens_texto, modalidade_label):
 # ================= PROCESSAMENTO =================
 
 def processar_contratacao(item):
-    """
-    Processa uma contratação retornada pela API.
-    Verifica keywords, busca itens, busca datas se ausentes, salva e notifica.
-    """
     objeto = item.get("objetoCompra", "")
     if not keyword_match(objeto):
         return False
@@ -530,11 +494,9 @@ def processar_contratacao(item):
 
     url_id = f"/compras/{cnpj}/{ano}/{seq}"
 
-    # Datas da listagem
     data_inicio = item.get("dataAberturaProposta")
     data_fim = item.get("dataEncerramentoProposta")
 
-    # Fallback: busca datas no endpoint individual se vieram nulas
     if not data_inicio or not data_fim:
         log.info(f"   🔍 Buscando datas individuais para {cnpj}/{ano}/{seq}...")
         di, df = buscar_datas_individuais(cnpj, ano, seq)
@@ -544,18 +506,15 @@ def processar_contratacao(item):
             data_fim = df
         time.sleep(0.3)
 
-    # Itens
     itens_texto, itens_banco, valor_itens = buscar_itens_relevantes(cnpj, ano, seq)
     time.sleep(0.3)
 
-    # Valor total
     valor_listagem = item.get("valorTotalEstimado")
     try:
         valor_total = valor_itens if valor_itens > 0 else (float(valor_listagem) if valor_listagem else 0.0)
     except Exception:
         valor_total = 0.0
 
-    # Título
     modalidade_nome = item.get("modalidadeNome", "")
     numero_edital = item.get("numeroCompra", item.get("sequencialCompra", ""))
     titulo = f"Edital nº {numero_edital}" if numero_edital else objeto[:200]
@@ -576,7 +535,6 @@ def processar_contratacao(item):
         "data_fim": data_fim,
         "numero_controle_pncp": item.get("numeroControlePNCP", ""),
         "link_sistema_origem": item.get("linkSistemaOrigem", ""),
-        # Campos auxiliares para montar o link (não persistidos)
         "_cnpj": cnpj,
         "_ano": str(ano),
         "_seq": str(seq),
@@ -609,19 +567,24 @@ def main():
         log.warning("⚠️ Telegram não configurado — alertas desativados")
 
     hoje = datetime.date.today()
-    data_ini = hoje - datetime.timedelta(days=DIAS_RETROATIVOS)
 
-    # Monta lista de dias a buscar (dia a dia para evitar timeout por volume)
-    dias = []
-    d = data_ini
-    while d <= hoje:
-        dias.append(d)
-        d += datetime.timedelta(days=1)
+    if DATA_ESPECIFICA:
+        dia_alvo = datetime.datetime.strptime(DATA_ESPECIFICA, "%Y%m%d").date()
+        dias = [dia_alvo]
+        log.info(f"📅 Modo recuperação — Dia específico: {dia_alvo.strftime('%d/%m/%Y')}")
+    else:
+        data_ini = hoje - datetime.timedelta(days=DIAS_RETROATIVOS)
+        dias = []
+        d = data_ini
+        while d <= hoje:
+            dias.append(d)
+            d += datetime.timedelta(days=1)
+        log.info(f"📅 Período: {data_ini.strftime('%d/%m/%Y')} a {hoje.strftime('%d/%m/%Y')} ({len(dias)} dia(s))")
 
-    log.info(f"📅 Período de busca: {data_ini.strftime('%d/%m/%Y')} a {hoje.strftime('%d/%m/%Y')} ({len(dias)} dia(s))")
     log.info(f"🔑 Keywords: {', '.join(KEYWORDS)}")
     log.info(f"📊 Modalidades: {MODALIDADES}")
-    log.info(f"ℹ️  Editais já no banco serão ignorados (dedup por url_id)")
+    log.info(f"📅 ATUALIZAR_DATAS: {ATUALIZAR_DATAS}")
+    log.info(f"ℹ️  Existentes: {'atualiza datas faltantes' if ATUALIZAR_DATAS else 'ignora'}")
 
     total_analisadas = 0
     total_encontradas = 0
