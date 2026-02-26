@@ -56,8 +56,6 @@ KEYWORDS = [
     "thc", "cânhamo", "marijuana", "maconha medicinal"
 ]
 
-# Termos que indicam que o edital NÃO é farmacêutico mesmo tendo keyword cannabis
-# Ex: equipamentos médicos com marca "Cannabis", serviços não relacionados
 BLOCKLIST_CONTEXTO = [
     "assistência técnica",
     "manutenção preventiva",
@@ -72,7 +70,6 @@ BLOCKLIST_CONTEXTO = [
 ]
 
 def objeto_bloqueado(texto):
-    """Retorna True se o objeto claramente não é farmacêutico."""
     if not texto:
         return False
     t = str(texto).lower()
@@ -82,19 +79,9 @@ PNCP_API_BASE = "https://pncp.gov.br/api/consulta/v1"
 
 DIAS_RETROATIVOS = 1
 
-# ⚠️ MODO RECUPERAÇÃO:
-# - APENAS_POPULAR_BANCO = True  → salva no banco mas NÃO envia Telegram
-# - DATA_ESPECIFICA = "20260225" → processa só esse dia (formato YYYYMMDD)
-# - ATUALIZAR_DATAS = True       → faz PATCH em registros sem data_inicio/data_fim
-#
-# Para recuperar datas do histórico:
-#   1. Defina APENAS_POPULAR_BANCO = True, ATUALIZAR_DATAS = True
-#   2. Rode com DATA_ESPECIFICA = "20260101" (cada dia que quiser recuperar)
-#   3. Após terminar: APENAS_POPULAR_BANCO = False, DATA_ESPECIFICA = "", ATUALIZAR_DATAS = True
-#      (ATUALIZAR_DATAS = True pode ficar ligado permanentemente — não causa problemas)
 APENAS_POPULAR_BANCO = False
 DATA_ESPECIFICA = ""
-ATUALIZAR_DATAS = True  # Sempre atualiza datas faltantes (seguro manter True)
+ATUALIZAR_DATAS = True
 
 MODALIDADES = [4, 5, 6, 7, 8, 9, 11, 13]
 TAMANHO_PAGINA = 50
@@ -168,7 +155,6 @@ def formatar_valor(val):
     except Exception:
         return None
 
-# Keywords que devem ser palavras inteiras (não podem ser parte de outra palavra)
 KEYWORDS_PALAVRA_INTEIRA = {"cbd", "thc"}
 
 def keyword_match(texto):
@@ -178,9 +164,6 @@ def keyword_match(texto):
     texto_lower = str(texto).lower()
     for kw in KEYWORDS:
         if kw.lower() in KEYWORDS_PALAVRA_INTEIRA:
-            # Exige que não haja letra imediatamente antes ou depois
-            # Ex: "cbd" bate em "CBD 200mg" mas não em "CBDE"
-            # Ex: "thc" bate em "THC medicinal" mas não em "THCA"
             pattern = r'(?<![a-zA-Z0-9])' + re.escape(kw.lower()) + r'(?![a-zA-Z])'
             if re.search(pattern, texto_lower):
                 return True
@@ -353,20 +336,12 @@ def buscar_todas_contratacoes(data_inicial, data_final, modalidade):
 # ================= SUPABASE =================
 
 def check_and_save_supabase(dados_edital, dados_itens):
-    """
-    Upsert do edital no Supabase.
-    - Registro NOVO: insere e retorna True (dispara Telegram)
-    - Já EXISTE: retorna False (não re-envia Telegram)
-      → Se ATUALIZAR_DATAS=True, faz PATCH das datas que estiverem nulas no banco
-    """
     url_id = dados_edital["url_id"]
     endpoint_editais = f"{SUPABASE_URL}/rest/v1/editais_pncp"
     endpoint_itens = f"{SUPABASE_URL}/rest/v1/itens_pncp"
 
-    # Remove campos auxiliares (prefixo _) que não existem na tabela
     dados_para_salvar = {k: v for k, v in dados_edital.items() if not k.startswith("_")}
 
-    # Verifica se já existe
     try:
         check = requests.get(
             f"{endpoint_editais}?url_id=eq.{requests.utils.quote(url_id)}&select=url_id,data_inicio,data_fim,data_publicacao",
@@ -401,11 +376,10 @@ def check_and_save_supabase(dados_edital, dados_itens):
             else:
                 log.info(f"⏭️  Já existe no banco: {url_id}")
 
-            return False  # Não re-envia Telegram
+            return False
     except Exception as e:
         log.warning(f"Aviso ao verificar Supabase: {e}")
 
-    # Novo registro — upsert
     headers_upsert = {**SUPABASE_HEADERS, "Prefer": "resolution=merge-duplicates,return=minimal"}
     try:
         res = requests.post(
@@ -422,7 +396,6 @@ def check_and_save_supabase(dados_edital, dados_itens):
         log.error(f"ERRO request Supabase ({url_id}): {e}")
         return False
 
-    # Insere itens
     if dados_itens:
         try:
             for item in dados_itens:
@@ -491,8 +464,7 @@ def enviar_telegram(edital, itens_texto, modalidade_label):
         f"{bloco_produtos}"
         f"{bloco_prazos}\n\n"
         f"🔗 <a href=\"{link_pncp}\">Abrir Edital no PNCP</a>\n"
-        f"📊 <a href=\"{DASHBOARD_URL}\">Ver no Radar FarmaUSA</a>\n"
-        f"<i>Alerta automático - FarmaUSA Life</i>"
+        f"📊 <a href=\"{DASHBOARD_URL}\">Ver no Radar FarmaUSA</a>"
     )
 
     try:
@@ -519,11 +491,9 @@ def enviar_telegram(edital, itens_texto, modalidade_label):
 def processar_contratacao(item):
     objeto = item.get("objetoCompra", "")
 
-    # Pré-filtro: objeto deve conter keyword cannabis para justificar buscar itens
     if not keyword_match(objeto):
         return False
 
-    # Blocklist: rejeitar objetos claramente não farmacêuticos
     if objeto_bloqueado(objeto):
         log.info(f"   🚫 Objeto bloqueado (contexto não farmacêutico): {objeto[:80]}")
         return False
@@ -549,7 +519,6 @@ def processar_contratacao(item):
             data_fim = df
         time.sleep(0.3)
 
-    # Match final nos ITENS — só salva se algum item tiver keyword cannabis
     itens_texto, itens_banco, valor_itens = buscar_itens_relevantes(cnpj, ano, seq)
     time.sleep(0.3)
 
@@ -594,10 +563,148 @@ def processar_contratacao(item):
         else:
             modalidade_label = classificar_modalidade(modalidade_nome)
             enviar_telegram(dados_edital, itens_texto, modalidade_label)
+            time.sleep(0.5)
         return True
 
     return False
 
+
+
+# ================= RESUMO DIÁRIO =================
+
+def enviar_resumo_dia():
+    hoje = datetime.date.today().isoformat()
+    hoje_fmt = datetime.date.today().strftime("%d/%m/%Y")
+    endpoint_editais = f"{SUPABASE_URL}/rest/v1/editais_pncp"
+    endpoint_itens = f"{SUPABASE_URL}/rest/v1/itens_pncp"
+
+    try:
+        r = requests.get(
+            endpoint_editais,
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+            },
+            params={
+                "data_publicacao": f"gte.{hoje}T00:00:00",
+                "select": "url_id,orgao,uf,modalidade,valor_total_estimado,titulo",
+                "order": "valor_total_estimado.desc.nullslast",
+            },
+            timeout=15,
+        )
+        editais = r.json() if r.status_code == 200 else []
+    except Exception as e:
+        log.warning(f"Erro ao buscar editais do dia: {e}")
+        return
+
+    if not editais:
+        msg = (
+            f"📊 <b>Resumo do dia — {hoje_fmt}</b>\n\n"
+            f"Nenhuma licitação cannabis encontrada hoje."
+        )
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML"},
+                timeout=10,
+            )
+        except Exception as e:
+            log.warning(f"Erro ao enviar resumo: {e}")
+        return
+
+    # Buscar itens de cada edital
+    blocos = []
+    valor_dia = 0.0
+
+    for i, edital in enumerate(editais, 1):
+        url_id = edital.get("url_id", "")
+        orgao = edital.get("orgao", "N/A")
+        uf = edital.get("uf", "")
+        modalidade_nome = edital.get("modalidade", "")
+        valor = edital.get("valor_total_estimado")
+
+        if valor:
+            try:
+                valor_dia += float(valor)
+            except Exception:
+                pass
+
+        modalidade_label = classificar_modalidade(modalidade_nome)
+        cabecalho = f"{i}. {modalidade_label}"
+        if uf:
+            cabecalho += f" | {uf}"
+
+        linhas = [cabecalho, f"🏢 {orgao}"]
+
+        # Buscar itens do edital
+        try:
+            ri = requests.get(
+                endpoint_itens,
+                headers={
+                    "apikey": SUPABASE_KEY,
+                    "Authorization": f"Bearer {SUPABASE_KEY}",
+                },
+                params={
+                    "edital_url_id": f"eq.{url_id}",
+                    "select": "descricao,quantidade,valor_unitario",
+                },
+                timeout=10,
+            )
+            itens = ri.json() if ri.status_code == 200 else []
+        except Exception:
+            itens = []
+
+        for item in itens[:5]:
+            desc = (item.get("descricao") or "")[:80]
+            qtd = item.get("quantidade")
+            vlr = item.get("valor_unitario")
+
+            linha_item = f"   • {desc}"
+            detalhes = []
+            if qtd:
+                try:
+                    q = float(qtd)
+                    detalhes.append(f"{int(q):,}".replace(",", ".") + " un.")
+                except Exception:
+                    pass
+            if vlr:
+                try:
+                    v = float(vlr)
+                    detalhes.append(f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + "/un.")
+                except Exception:
+                    pass
+            if detalhes:
+                linha_item += " — " + " | ".join(detalhes)
+            linhas.append(linha_item)
+
+        blocos.append("\n".join(linhas))
+
+    separador = "\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    corpo = separador.join(blocos)
+
+    valor_fmt = ""
+    if valor_dia > 0:
+        valor_fmt = f"\n💰 Valor total do dia: R$ {valor_dia:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+    msg = (
+        f"📊 <b>Resumo do dia — {hoje_fmt}</b>\n"
+        f"🌿 {len(editais)} licitação(ões) cannabis encontrada(s)\n"
+        f"\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{corpo}"
+        f"\n━━━━━━━━━━━━━━━━━━━━━━"
+        f"{valor_fmt}\n"
+        f'📊 <a href="{DASHBOARD_URL}">Ver no Radar FarmaUSA</a>'
+    )
+
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML", "disable_web_page_preview": True},
+            timeout=10,
+        )
+        log.info(f"📊 Resumo diário enviado — {len(editais)} edital(is).")
+    except Exception as e:
+        log.warning(f"Erro ao enviar resumo diário: {e}")
 
 # ================= MAIN =================
 
@@ -621,13 +728,20 @@ def main():
         dias = [dia_alvo]
         log.info(f"📅 Modo recuperação — Dia específico: {dia_alvo.strftime('%d/%m/%Y')}")
     else:
-        data_ini = hoje - datetime.timedelta(days=DIAS_RETROATIVOS)
+        # Primeira execução do dia (antes das 10h): busca ontem + hoje para garantir cobertura
+        # Demais execuções: busca só hoje
+        hora_atual = datetime.datetime.now().hour
+        retroativos = 1 if hora_atual < 10 else 0
+        data_ini = hoje - datetime.timedelta(days=retroativos)
         dias = []
         d = data_ini
         while d <= hoje:
             dias.append(d)
             d += datetime.timedelta(days=1)
-        log.info(f"📅 Período: {data_ini.strftime('%d/%m/%Y')} a {hoje.strftime('%d/%m/%Y')} ({len(dias)} dia(s))")
+        if retroativos > 0:
+            log.info(f"📅 Período: {data_ini.strftime('%d/%m/%Y')} a {hoje.strftime('%d/%m/%Y')} (2 dias — cobertura da primeira execução)")
+        else:
+            log.info(f"📅 Período: hoje {hoje.strftime('%d/%m/%Y')} (execução intradiária)")
 
     log.info(f"🔑 Keywords: {', '.join(KEYWORDS)}")
     log.info(f"📊 Modalidades: {MODALIDADES}")
@@ -664,6 +778,11 @@ def main():
     log.info(f"   Novas (Telegram):  {total_novas}")
     log.info(f"   Já conhecidas:     {total_encontradas - total_novas}")
     log.info("=" * 60)
+
+    # Resumo diário — envia apenas na execução das 18h em diante
+    if TELEGRAM_BOT_TOKEN and CHAT_ID and not APENAS_POPULAR_BANCO:
+        if datetime.datetime.now().hour >= 18:
+            enviar_resumo_dia()
 
 
 if __name__ == "__main__":
