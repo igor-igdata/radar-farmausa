@@ -728,10 +728,10 @@ def main():
         dias = [dia_alvo]
         log.info(f"📅 Modo recuperação — Dia específico: {dia_alvo.strftime('%d/%m/%Y')}")
     else:
-        # Primeira execução do dia (antes das 10h): busca ontem + hoje para garantir cobertura
+        # Primeira execução do dia (11 UTC = 08:30 Brasília): busca ontem + hoje para garantir cobertura
         # Demais execuções: busca só hoje
-        hora_atual = datetime.datetime.now().hour
-        retroativos = 1 if hora_atual < 10 else 0
+        hora_utc = datetime.datetime.utcnow().hour
+        retroativos = 1 if hora_utc < 13 else 0  # antes das 13 UTC = antes das 10h Brasília
         data_ini = hoje - datetime.timedelta(days=retroativos)
         dias = []
         d = data_ini
@@ -781,7 +781,7 @@ def main():
 
     # Resumo diário — envia apenas na execução das 18h em diante
     if TELEGRAM_BOT_TOKEN and CHAT_ID and not APENAS_POPULAR_BANCO:
-        if datetime.datetime.now().hour >= 18:
+        if datetime.datetime.utcnow().hour >= 21:  # 21 UTC = 18:30 Brasília
             enviar_resumo_dia()
 
 
