@@ -314,7 +314,7 @@ def buscar_contratacoes_pagina(data_inicial, data_final, modalidade, pagina=1):
         "pagina": pagina,
     }
     try:
-        r = requests.get(url, params=params, timeout=20)
+        r = requests.get(url, params=params, timeout=60)
         if r.status_code == 200:
             return r.json().get("data", [])
         elif r.status_code == 204:
@@ -609,12 +609,16 @@ def main():
         log.warning("⚠️ Telegram não configurado — alertas desativados")
 
     hoje = datetime.date.today()
-    # Busca hoje + ontem para cobrir publicações na virada do dia
     data_ini = hoje - datetime.timedelta(days=DIAS_RETROATIVOS)
-    data_ini_str = data_ini.strftime("%Y%m%d")
-    data_fim_str = hoje.strftime("%Y%m%d")
 
-    log.info(f"📅 Período de busca: {data_ini.strftime('%d/%m/%Y')} a {hoje.strftime('%d/%m/%Y')}")
+    # Monta lista de dias a buscar (dia a dia para evitar timeout por volume)
+    dias = []
+    d = data_ini
+    while d <= hoje:
+        dias.append(d)
+        d += datetime.timedelta(days=1)
+
+    log.info(f"📅 Período de busca: {data_ini.strftime('%d/%m/%Y')} a {hoje.strftime('%d/%m/%Y')} ({len(dias)} dia(s))")
     log.info(f"🔑 Keywords: {', '.join(KEYWORDS)}")
     log.info(f"📊 Modalidades: {MODALIDADES}")
     log.info(f"ℹ️  Editais já no banco serão ignorados (dedup por url_id)")
@@ -623,20 +627,24 @@ def main():
     total_encontradas = 0
     total_novas = 0
 
-    for modalidade in MODALIDADES:
-        log.info(f"--- Modalidade {modalidade} ---")
-        contratacoes = buscar_todas_contratacoes(data_ini_str, data_fim_str, modalidade)
-        log.info(f"   📄 {len(contratacoes)} contratações")
-        total_analisadas += len(contratacoes)
+    for dia in dias:
+        dia_str = dia.strftime("%Y%m%d")
+        log.info(f"\n📆 Processando dia: {dia.strftime('%d/%m/%Y')}")
 
-        for item in contratacoes:
-            if keyword_match(item.get("objetoCompra", "")):
-                total_encontradas += 1
-                log.info(f"   🎯 Match: {item.get('objetoCompra', '')[:80]}...")
-                if processar_contratacao(item):
-                    total_novas += 1
+        for modalidade in MODALIDADES:
+            contratacoes = buscar_todas_contratacoes(dia_str, dia_str, modalidade)
+            if contratacoes:
+                log.info(f"   Mod {modalidade}: {len(contratacoes)} contratações")
+            total_analisadas += len(contratacoes)
 
-        time.sleep(0.5)
+            for item in contratacoes:
+                if keyword_match(item.get("objetoCompra", "")):
+                    total_encontradas += 1
+                    log.info(f"   🎯 Match: {item.get('objetoCompra', '')[:80]}...")
+                    if processar_contratacao(item):
+                        total_novas += 1
+
+            time.sleep(0.3)
 
     log.info("=" * 60)
     log.info("📊 RESUMO:")
