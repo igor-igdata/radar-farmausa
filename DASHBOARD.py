@@ -253,16 +253,6 @@ with st.sidebar:
 
     st.divider()
 
-    # Contador total vs filtrado — calculado após aplicar filtros (atualizado via session_state)
-    total_banco = len(df)
-    if "n_filtrado" not in st.session_state:
-        st.session_state["n_filtrado"] = total_banco
-    n_filt = st.session_state.get("n_filtrado", total_banco)
-    if n_filt < total_banco:
-        st.markdown(f"**🔎 Exibindo {n_filt} de {total_banco} editais**")
-    else:
-        st.markdown(f"**📊 {total_banco} editais no banco**")
-
     # Indicador de cache
     ts_carregamento = st.session_state.get("ts_carregamento", datetime.now())
     segundos_passados = int((datetime.now() - ts_carregamento).total_seconds())
@@ -296,6 +286,15 @@ if busca:
 
 # Atualiza contador da sidebar
 st.session_state["n_filtrado"] = len(df_f)
+
+# Contador injetado na sidebar APÓS os filtros — valor sempre correto
+total_banco = len(df)
+with st.sidebar:
+    st.divider()
+    if len(df_f) < total_banco:
+        st.markdown(f"**🔎 Exibindo {len(df_f)} de {total_banco} editais**")
+    else:
+        st.markdown(f"**📊 {total_banco} editais no banco**")
 
 # ─── KPIs ─────────────────────────────────────────────────────────────────────
 df_ativos = df_f[df_f["status"].isin(["✅ Aberto", "⚠️ Urgente"])]
