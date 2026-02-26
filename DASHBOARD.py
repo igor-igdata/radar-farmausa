@@ -98,11 +98,21 @@ def processar_dados(df_editais, df_itens):
     if df_editais.empty:
         return pd.DataFrame()
 
-    hoje = datetime.now()
+    hoje = datetime.now()  # naive, sem timezone (compatível com datas convertidas)
 
-    df_editais["dt_fim"] = pd.to_datetime(df_editais["data_fim"], errors="coerce")
-    df_editais["dt_inicio"] = pd.to_datetime(df_editais["data_inicio"], errors="coerce")
-    df_editais["dt_pub"] = pd.to_datetime(df_editais["data_publicacao"], errors="coerce")
+    def parse_dt(col):
+        """Converte coluna de data do Supabase (com ou sem timezone) para datetime naive."""
+        parsed = pd.to_datetime(col, errors="coerce", utc=True)
+        # Converte para horário de Brasília (UTC-3) e remove timezone
+        try:
+            parsed = parsed.dt.tz_convert("America/Sao_Paulo").dt.tz_localize(None)
+        except Exception:
+            parsed = parsed.dt.tz_localize(None)
+        return parsed
+
+    df_editais["dt_fim"] = parse_dt(df_editais["data_fim"])
+    df_editais["dt_inicio"] = parse_dt(df_editais["data_inicio"])
+    df_editais["dt_pub"] = parse_dt(df_editais["data_publicacao"])
 
     def calcular_status(row):
         if pd.isna(row["dt_fim"]):
