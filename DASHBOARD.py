@@ -332,11 +332,8 @@ with aba1:
     df_exib["_ordem"] = df_exib["status"].map(ordem_status).fillna(9)
     df_exib = df_exib.sort_values(["_ordem", "dt_fim"], na_position="last")
 
-    # Converter datas para string formatada (evita bug do DatetimeColumn no Streamlit)
-    df_exib["pub_fmt"] = df_exib["dt_pub"].dt.strftime("%d/%m/%Y").fillna("—")
-
     colunas_exib = {
-        "pub_fmt": "Publicação",
+        "dt_pub": "Publicação",
         "uf": "UF",
         "orgao": "Órgão",
         "modalidade": "Modalidade",
@@ -357,8 +354,9 @@ with aba1:
         use_container_width=True,
         hide_index=True,
         column_config={
-            "Publicação": st.column_config.TextColumn(
+            "Publicação": st.column_config.DateColumn(
                 "Publicação",
+                format="DD/MM/YYYY",
                 width="small",
             ),
             "Qtd.": st.column_config.NumberColumn(
