@@ -9,7 +9,7 @@ on:
 jobs:
   atualizar_banco:
     runs-on: ubuntu-latest
-    timeout-minutes: 15  # Mata o job se travar (ex: API PNCP sem resposta)
+    timeout-minutes: 30  # Aumentado de 15 para 30
 
     env:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -19,13 +19,13 @@ jobs:
 
     steps:
       - name: Puxar os arquivos do repositório
-        uses: actions/checkout@v4  # v3 está depreciado
+        uses: actions/checkout@v4
 
       - name: Instalar o Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'  # Cacheia dependências para rodar mais rápido
+          cache: 'pip'
 
       - name: Instalar bibliotecas necessárias
         run: pip install requests
@@ -34,7 +34,7 @@ jobs:
         run: python LICITACAO.PY
 
       - name: Notificar falha no Telegram
-        if: failure()  # Só roda se o passo anterior falhar
+        if: failure()
         run: |
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             -d chat_id="${TELEGRAM_CHAT_ID}" \
