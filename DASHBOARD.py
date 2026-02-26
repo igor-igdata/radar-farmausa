@@ -101,14 +101,20 @@ def processar_dados(df_editais, df_itens):
     hoje = datetime.now()  # naive, sem timezone (compatível com datas convertidas)
 
     def parse_dt(col):
-        """Converte coluna de data do Supabase (com ou sem timezone) para datetime naive."""
-        parsed = pd.to_datetime(col, errors="coerce", utc=True)
-        # Converte para horário de Brasília (UTC-3) e remove timezone
-        try:
-            parsed = parsed.dt.tz_convert("America/Sao_Paulo").dt.tz_localize(None)
-        except Exception:
-            parsed = parsed.dt.tz_localize(None)
-        return parsed
+        """Converte coluna de data do Supabase para datetime naive, tratando mixed timezones."""
+        from zoneinfo import ZoneInfo
+        tz_br = ZoneInfo("America/Sao_Paulo")
+        def _parse_single(val):
+            if not val or pd.isna(val):
+                return pd.NaT
+            try:
+                dt = pd.to_datetime(val)
+                if dt.tzinfo is not None:
+                    dt = dt.tz_convert(tz_br).replace(tzinfo=None)
+                return dt
+            except Exception:
+                return pd.NaT
+        return pd.Series([_parse_single(v) for v in col], index=col.index)
 
     df_editais["dt_fim"] = parse_dt(df_editais["data_fim"])
     df_editais["dt_inicio"] = parse_dt(df_editais["data_inicio"])
