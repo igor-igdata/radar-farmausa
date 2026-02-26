@@ -194,7 +194,7 @@ def buscar_datas_individuais(cnpj, ano, seq):
 
 
 def buscar_itens_relevantes(cnpj, ano, seq):
-    url = f"https://pncp.gov.br/api/consulta/v1/orgaos/{cnpj}/compras/{ano}/{seq}/itens"
+    url = f"https://pncp.gov.br/api/pncp/v1/orgaos/{cnpj}/compras/{ano}/{seq}/itens"
     itens_texto = []
     itens_banco = []
     valor_total = 0.0
@@ -482,6 +482,8 @@ def enviar_telegram(edital, itens_texto, modalidade_label):
 
 def processar_contratacao(item):
     objeto = item.get("objetoCompra", "")
+
+    # Pré-filtro: objeto deve conter keyword cannabis para justificar buscar itens
     if not keyword_match(objeto):
         return False
 
@@ -506,8 +508,13 @@ def processar_contratacao(item):
             data_fim = df
         time.sleep(0.3)
 
+    # Match final nos ITENS — só salva se algum item tiver keyword cannabis
     itens_texto, itens_banco, valor_itens = buscar_itens_relevantes(cnpj, ano, seq)
     time.sleep(0.3)
+
+    if not itens_banco:
+        log.info(f"   ⏭️  Objeto tinha keyword mas nenhum ITEM confirmou — ignorando")
+        return False
 
     valor_listagem = item.get("valorTotalEstimado")
     try:
