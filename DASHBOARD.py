@@ -56,7 +56,9 @@ st.markdown("""
 
 # ─── Carregamento de dados ────────────────────────────────────────────────────
 
-@st.cache_data(ttl=120)
+CACHE_TTL = 120  # segundos
+
+@st.cache_data(ttl=CACHE_TTL)
 def carregar_editais():
     try:
         url = f"{SUPABASE_URL}/rest/v1/editais_pncp?select=*&order=data_publicacao.desc"
@@ -68,7 +70,7 @@ def carregar_editais():
         return pd.DataFrame()
 
 
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=CACHE_TTL)
 def carregar_itens():
     try:
         url = f"{SUPABASE_URL}/rest/v1/itens_pncp?select=*"
@@ -224,6 +226,8 @@ st.caption("Monitoramento em tempo real de oportunidades no PNCP para a equipe c
 with st.spinner("Carregando dados..."):
     df_editais = carregar_editais()
     df_itens = carregar_itens()
+    if "ts_carregamento" not in st.session_state:
+        st.session_state["ts_carregamento"] = datetime.now()
 
 if df_editais.empty:
     st.info("O banco de dados está vazio ou ainda sendo atualizado.")
@@ -248,9 +252,28 @@ with st.sidebar:
     busca = st.text_input("Buscar órgão ou produto:", placeholder="ex: Secretaria, Pregão...")
 
     st.divider()
-    st.caption(f"Atualizado: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+
+    # Contador total vs filtrado — calculado após aplicar filtros (atualizado via session_state)
+    total_banco = len(df)
+    if "n_filtrado" not in st.session_state:
+        st.session_state["n_filtrado"] = total_banco
+    n_filt = st.session_state.get("n_filtrado", total_banco)
+    if n_filt < total_banco:
+        st.markdown(f"**🔎 Exibindo {n_filt} de {total_banco} editais**")
+    else:
+        st.markdown(f"**📊 {total_banco} editais no banco**")
+
+    # Indicador de cache
+    ts_carregamento = st.session_state.get("ts_carregamento", datetime.now())
+    segundos_passados = int((datetime.now() - ts_carregamento).total_seconds())
+    segundos_restantes = max(0, CACHE_TTL - segundos_passados)
+    st.caption(
+        f"Atualizado: {ts_carregamento.strftime('%d/%m/%Y %H:%M')}  \n"
+        f"Cache expira em ~{segundos_restantes}s"
+    )
     if st.button("🔄 Recarregar dados"):
         st.cache_data.clear()
+        st.session_state["ts_carregamento"] = datetime.now()
         st.rerun()
 
 # ─── Aplicar filtros ──────────────────────────────────────────────────────────
@@ -271,6 +294,9 @@ if busca:
     )
     df_f = df_f[mask]
 
+# Atualiza contador da sidebar
+st.session_state["n_filtrado"] = len(df_f)
+
 # ─── KPIs ─────────────────────────────────────────────────────────────────────
 df_ativos = df_f[df_f["status"].isin(["✅ Aberto", "⚠️ Urgente"])]
 
@@ -287,12 +313,40 @@ def fmt_moeda(v):
         return "—"
     return f"R$ {v:,.0f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
+# Delta — snapshot guardado na session_state, renovado a cada 7 dias
+_snap_key, _snap_ts_key = "kpi_snapshot", "kpi_snapshot_ts"
+_agora = datetime.now()
+_snap = st.session_state.get(_snap_key)
+_snap_ts = st.session_state.get(_snap_ts_key)
+
+if _snap is None or (_snap_ts and (_agora - _snap_ts).days >= 7):
+    st.session_state[_snap_key] = {
+        "editais": total_editais, "frascos": int(total_frascos),
+        "valor": valor_total, "urgentes": urgentes,
+    }
+    st.session_state[_snap_ts_key] = _agora
+    _snap = st.session_state[_snap_key]
+
+_d_editais = total_editais  - _snap.get("editais",  total_editais)
+_d_frascos = int(total_frascos) - _snap.get("frascos", int(total_frascos))
+_d_valor   = valor_total    - _snap.get("valor",   valor_total)
+_d_urg     = urgentes       - _snap.get("urgentes", urgentes)
+
 c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("📦 Frascos Solicitados", f"{int(total_frascos):,}".replace(",", "."))
-c2.metric("💰 Valor Estimado", fmt_moeda(valor_total))
-c3.metric("📋 Editais Ativos", total_editais)
+c1.metric("📦 Frascos Solicitados",
+          f"{int(total_frascos):,}".replace(",", "."),
+          delta=f"{_d_frascos:+,}".replace(",", ".") if _d_frascos != 0 else None)
+c2.metric("💰 Valor Estimado",
+          fmt_moeda(valor_total),
+          delta=fmt_moeda(abs(_d_valor)) if _d_valor != 0 else None)
+c3.metric("📋 Editais Ativos",
+          total_editais,
+          delta=f"{_d_editais:+d}" if _d_editais != 0 else None)
 c4.metric("🗺️ Estados", total_estados)
-c5.metric("⚠️ Urgentes (72h)", urgentes)
+c5.metric("⚠️ Urgentes (72h)",
+          urgentes,
+          delta=f"{_d_urg:+d}" if _d_urg != 0 else None,
+          delta_color="inverse")
 
 st.divider()
 
@@ -468,10 +522,9 @@ with aba2:
                 )
                 df_preco = df_preco.merge(df_meta, on="edital_url_id", how="left")
 
-                df_preco["Publicação"] = df_preco["dt_pub"].dt.strftime("%d/%m/%Y").fillna("—")
                 df_preco = df_preco.rename(columns={
                     "descricao": "Produto", "quantidade": "Qtd", "valor_unitario": "Preço Unit. (R$)",
-                    "uf": "UF", "orgao": "Órgão", "link_pncp": "Edital"
+                    "uf": "UF", "orgao": "Órgão", "dt_pub": "Publicação", "link_pncp": "Edital"
                 })
 
                 st.dataframe(
@@ -482,7 +535,7 @@ with aba2:
                     column_config={
                         "Qtd": st.column_config.NumberColumn("Qtd", format="%d", width="small"),
                         "Preço Unit. (R$)": st.column_config.NumberColumn("Preço Unit. (R$)", format="R$ %.2f", width="medium"),
-                        "Publicação": st.column_config.TextColumn("Publicação", width="small"),
+                        "Publicação": st.column_config.DateColumn("Publicação", format="DD/MM/YYYY", width="small"),
                         "Edital": st.column_config.LinkColumn("Edital", display_text="Ver ↗", width="small"),
                         "UF": st.column_config.TextColumn("UF", width="small"),
                     }
