@@ -146,12 +146,26 @@ def formatar_valor(val):
     except Exception:
         return None
 
+# Keywords que devem ser palavras inteiras (não podem ser parte de outra palavra)
+KEYWORDS_PALAVRA_INTEIRA = {"cbd", "thc"}
 
 def keyword_match(texto):
     if not texto:
         return False
+    import re
     texto_lower = str(texto).lower()
-    return any(kw.lower() in texto_lower for kw in KEYWORDS)
+    for kw in KEYWORDS:
+        if kw.lower() in KEYWORDS_PALAVRA_INTEIRA:
+            # Exige que não haja letra imediatamente antes ou depois
+            # Ex: "cbd" bate em "CBD 200mg" mas não em "CBDE"
+            # Ex: "thc" bate em "THC medicinal" mas não em "THCA"
+            pattern = r'(?<![a-zA-Z0-9])' + re.escape(kw.lower()) + r'(?![a-zA-Z])'
+            if re.search(pattern, texto_lower):
+                return True
+        else:
+            if kw.lower() in texto_lower:
+                return True
+    return False
 
 
 def montar_link_pncp(cnpj, ano, seq):
