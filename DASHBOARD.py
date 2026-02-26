@@ -183,10 +183,13 @@ def processar_dados(df_editais, df_itens):
         df_itens_v["_valor_item"] = df_itens_v.apply(_valor_item, axis=1)
 
         # Item principal = item de maior valor dentro do edital
-        # Usa reset_index() para garantir índice contínuo antes do idxmax
-        df_itens_v = df_itens_v.reset_index(drop=True)
-        idx_principal = df_itens_v.groupby("edital_url_id")["_valor_item"].idxmax()
-        df_principal = df_itens_v.loc[idx_principal.values].copy()
+        # sort + drop_duplicates é mais seguro que idxmax+loc (sem dependência de índice)
+        df_principal = (
+            df_itens_v
+            .sort_values("_valor_item", ascending=False)
+            .drop_duplicates(subset="edital_url_id", keep="first")
+            .copy()
+        )
         df_principal = df_principal.rename(columns={
             "edital_url_id":  "url_id",
             "descricao":      "_descricao_principal",
