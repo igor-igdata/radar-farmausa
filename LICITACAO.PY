@@ -71,7 +71,7 @@ KEYWORDS = [
 
 PNCP_API_BASE = "https://pncp.gov.br/api/consulta/v1"
 
-DIAS_RETROATIVOS = 1
+DIAS_RETROATIVOS = 1  # Busca hoje + ontem (cobre publicações da madrugada/virada)
 
 # Modalidades: 4=Concorrência Eletrônica, 5=Concorrência Presencial,
 # 6=Pregão Eletrônico, 7=Pregão Presencial, 8=Dispensa,
@@ -356,7 +356,10 @@ def check_and_save_supabase(dados_edital, dados_itens):
     endpoint_editais = f"{SUPABASE_URL}/rest/v1/editais_pncp"
     endpoint_itens = f"{SUPABASE_URL}/rest/v1/itens_pncp"
 
-    # Verifica se já existe
+    # Remove campos auxiliares que não existem na tabela (prefixo _)
+    dados_para_salvar = {k: v for k, v in dados_edital.items() if not k.startswith("_")}
+
+    # Verifica se já existe ANTES do upsert
     is_new = True
     try:
         check = requests.get(
@@ -366,38 +369,47 @@ def check_and_save_supabase(dados_edital, dados_itens):
         )
         if check.status_code == 200 and len(check.json()) > 0:
             is_new = False
+            log.info(f"⏭️  Já existe no banco: {url_id}")
+            return False  # Não re-envia Telegram para registros existentes
     except Exception as e:
         log.warning(f"Aviso ao verificar Supabase: {e}")
 
-    # Upsert edital
-    headers_upsert = SUPABASE_HEADERS.copy()
-    headers_upsert["Prefer"] = "resolution=merge-duplicates"
+    # Upsert edital — on_conflict no header Prefer (forma correta para Supabase)
+    headers_upsert = {**SUPABASE_HEADERS, "Prefer": "resolution=merge-duplicates,return=minimal"}
     try:
         res = requests.post(
             f"{endpoint_editais}?on_conflict=url_id",
             headers=headers_upsert,
-            json=dados_edital,
+            json=dados_para_salvar,
             timeout=10
         )
         if res.status_code not in [200, 201, 204]:
-            log.error(f"ERRO upsert ({url_id}): {res.status_code} - {res.text}")
+            log.error(f"ERRO upsert ({url_id}): {res.status_code} - {res.text[:300]}")
             return False
-        log.info(f"✅ Supabase {'NOVO' if is_new else 'ATUALIZADO'}: {url_id}")
+        log.info(f"✅ Supabase NOVO salvo: {url_id}")
     except Exception as e:
         log.error(f"ERRO request Supabase ({url_id}): {e}")
         return False
 
-    # Insere itens apenas se for registro novo
-    if is_new and dados_itens:
+    # Insere itens do edital novo
+    if dados_itens:
         try:
             for item in dados_itens:
                 item["edital_url_id"] = url_id
-            requests.post(endpoint_itens, headers=SUPABASE_HEADERS, json=dados_itens, timeout=10)
-            log.info(f"   └─ {len(dados_itens)} item(ns) inserido(s)")
+            res_itens = requests.post(
+                endpoint_itens,
+                headers={**SUPABASE_HEADERS, "Prefer": "return=minimal"},
+                json=dados_itens,
+                timeout=10
+            )
+            if res_itens.status_code not in [200, 201, 204]:
+                log.warning(f"Erro ao inserir itens: {res_itens.status_code} - {res_itens.text[:200]}")
+            else:
+                log.info(f"   └─ {len(dados_itens)} item(ns) inserido(s)")
         except Exception as e:
             log.warning(f"Erro ao inserir itens: {e}")
 
-    return is_new
+    return True  # É novo, dispara Telegram
 
 
 # ================= TELEGRAM =================
@@ -576,46 +588,11 @@ def processar_contratacao(item):
 
 # ================= MAIN =================
 
-def enviar_status_diario(total_analisadas, total_encontradas, total_novas):
-    """Envia mensagem de status diário no Telegram."""
-    if not TELEGRAM_BOT_TOKEN or not CHAT_ID:
-        return
-
-    hoje = datetime.date.today().strftime("%d/%m/%Y")
-
-    if total_novas > 0:
-        status_line = f"\U0001f3af {total_novas} nova(s) licitação(ões) encontrada(s)!"
-    elif total_encontradas > 0:
-        status_line = f"\U0001f4cb {total_encontradas} edital(is) já cadastrado(s) — sem novidades"
-    else:
-        status_line = "\u2705 Nenhuma licitação cannabis hoje"
-
-    mensagem = (
-        f"\U0001f4ca <b>Radar FarmaUSA — Status Diário</b>\n"
-        f"\U0001f4c5 {hoje}\n"
-        f"─────────────────────\n"
-        f"\U0001f50d Contratações analisadas: <b>{total_analisadas}</b>\n"
-        f"\U0001f33f Com cannabis: <b>{total_encontradas}</b>\n"
-        f"\U0001f514 Novas notificações: <b>{total_novas}</b>\n"
-        f"─────────────────────\n"
-        f"{status_line}\n"
-        f"\U0001f916 Sistema operando normalmente"
-    )
-
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-            json={"chat_id": CHAT_ID, "text": mensagem, "parse_mode": "HTML"},
-            timeout=10,
-        )
-        log.info("\U0001f4f1 Status diário enviado ao Telegram")
-    except Exception as e:
-        log.warning(f"Erro ao enviar status diário: {e}")
-
-
 def main():
+    agora = datetime.datetime.now()
     log.info("=" * 60)
-    log.info("🔍 RADAR FARMAUSA v2 — Licitações Cannabis")
+    log.info(f"🔍 RADAR FARMAUSA v2 — Licitações Cannabis")
+    log.info(f"⏰ Execução: {agora.strftime('%d/%m/%Y %H:%M:%S')}")
     log.info("=" * 60)
 
     if not SUPABASE_URL or not SUPABASE_KEY:
@@ -625,13 +602,15 @@ def main():
         log.warning("⚠️ Telegram não configurado — alertas desativados")
 
     hoje = datetime.date.today()
+    # Busca hoje + ontem para cobrir publicações na virada do dia
     data_ini = hoje - datetime.timedelta(days=DIAS_RETROATIVOS)
     data_ini_str = data_ini.strftime("%Y%m%d")
     data_fim_str = hoje.strftime("%Y%m%d")
 
-    log.info(f"📅 Período: {data_ini.strftime('%d/%m/%Y')} a {hoje.strftime('%d/%m/%Y')}")
+    log.info(f"📅 Período de busca: {data_ini.strftime('%d/%m/%Y')} a {hoje.strftime('%d/%m/%Y')}")
     log.info(f"🔑 Keywords: {', '.join(KEYWORDS)}")
     log.info(f"📊 Modalidades: {MODALIDADES}")
+    log.info(f"ℹ️  Editais já no banco serão ignorados (dedup por url_id)")
 
     total_analisadas = 0
     total_encontradas = 0
@@ -654,15 +633,11 @@ def main():
 
     log.info("=" * 60)
     log.info("📊 RESUMO:")
-    log.info(f"   Analisadas:  {total_analisadas}")
-    log.info(f"   Com cannabis: {total_encontradas}")
-    log.info(f"   Novas (Telegram): {total_novas}")
+    log.info(f"   Analisadas:        {total_analisadas}")
+    log.info(f"   Com cannabis:      {total_encontradas}")
+    log.info(f"   Novas (Telegram):  {total_novas}")
+    log.info(f"   Já conhecidas:     {total_encontradas - total_novas}")
     log.info("=" * 60)
-
-    # Envia status diário se for a execução das 18h (hora UTC 21)
-    hora_atual = datetime.datetime.utcnow().hour
-    if hora_atual == 21:  # 21h UTC = 18h Brasília
-        enviar_status_diario(total_analisadas, total_encontradas, total_novas)
 
 
 if __name__ == "__main__":
