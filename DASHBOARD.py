@@ -163,29 +163,63 @@ def processar_dados(df_editais, df_itens):
     df_editais["Encerramento"] = df_editais["dt_fim"].dt.strftime("%d/%m/%Y %H:%M").fillna("—")
     df_editais["Publicação"] = df_editais["dt_pub"].dt.strftime("%d/%m/%Y").fillna("—")
 
-    # JOIN com itens
+    # JOIN com itens — item principal = maior valor total do edital
     if not df_itens.empty and "edital_url_id" in df_itens.columns:
-        agg = df_itens.groupby("edital_url_id").agg(
-            qtd_total=("quantidade", "sum"),
-            n_itens=("id", "count"),
-            preco_unit_max=("valor_unitario", "max"),
-            preco_unit_min=("valor_unitario", "min"),
-            _descricao_max_qtd=("descricao", lambda x: x.iloc[
-                df_itens.loc[x.index, "quantidade"].fillna(0).argmax()
-            ] if len(x) > 0 else ""),
-        ).reset_index()
-        agg.rename(columns={"edital_url_id": "url_id"}, inplace=True)
-        df = df_editais.merge(agg, on="url_id", how="left")
+        df_itens_v = df_itens.copy()
+
+        # Valor por item: usa campo direto ou qtd × preço unitário
+        def _valor_item(row):
+            try:
+                vt = float(row.get("valor_total") or 0)
+                if vt > 0:
+                    return vt
+            except Exception:
+                pass
+            try:
+                return float(row.get("valor_unitario") or 0) * float(row.get("quantidade") or 0)
+            except Exception:
+                return 0.0
+
+        df_itens_v["_valor_item"] = df_itens_v.apply(_valor_item, axis=1)
+
+        # Item principal = item de maior valor dentro do edital
+        idx_principal = df_itens_v.groupby("edital_url_id")["_valor_item"].idxmax()
+        df_principal = df_itens_v.loc[idx_principal].copy()
+        df_principal = df_principal.rename(columns={
+            "edital_url_id":  "url_id",
+            "descricao":      "_descricao_principal",
+            "quantidade":     "_qtd_principal",
+            "valor_unitario": "_preco_unit_principal",
+            "valor_total":    "_valor_total_principal",
+        })
+
+        # Contagem total de itens por edital (informativo)
+        n_itens_agg = df_itens.groupby("edital_url_id").size().reset_index(name="n_itens")
+        n_itens_agg.rename(columns={"edital_url_id": "url_id"}, inplace=True)
+
+        df = df_editais.merge(
+            df_principal[["url_id", "_descricao_principal", "_qtd_principal",
+                          "_preco_unit_principal", "_valor_total_principal", "_valor_item"]],
+            on="url_id", how="left"
+        ).merge(n_itens_agg, on="url_id", how="left")
+
+        df["qtd_total"]      = df["_qtd_principal"]
+        df["preco_unit_max"] = df["_preco_unit_principal"]
+        df["preco_unit_min"] = df["_preco_unit_principal"]
     else:
         df = df_editais.copy()
-        df["qtd_total"] = 0
-        df["n_itens"] = 0
-        df["preco_unit_max"] = None
-        df["preco_unit_min"] = None
-        df["_descricao_max_qtd"] = ""
+        df["_descricao_principal"]  = ""
+        df["_qtd_principal"]        = None
+        df["_preco_unit_principal"] = None
+        df["_valor_total_principal"]= None
+        df["_valor_item"]           = 0.0
+        df["qtd_total"]             = 0
+        df["n_itens"]               = 0
+        df["preco_unit_max"]        = None
+        df["preco_unit_min"]        = None
 
     def resumir_produto(row):
-        desc = str(row.get("_descricao_max_qtd", "") or "")
+        desc = str(row.get("_descricao_principal", "") or "")
         if desc and len(desc) > 5:
             return desc[:120]
         return str(row.get("objeto", row.get("titulo", "—")) or "—")[:120]
@@ -203,7 +237,8 @@ def processar_dados(df_editais, df_itens):
         lambda x: f"{int(x):,}".replace(",", ".") if pd.notna(x) and x > 0 else "—"
     )
 
-    # Valor total formatado — usa valor_total_estimado do banco (correto após migração)
+    # Valor total formatado — usa valor do item principal (coerente com qtd/preço exibidos)
+    # Fallback para valor_total_estimado do edital se item não tiver valor
     def formatar_valor_total(val):
         try:
             f = float(val)
@@ -213,7 +248,12 @@ def processar_dados(df_editais, df_itens):
         except Exception:
             return "—"
 
-    df["valor_total_fmt"] = df["valor_total_estimado"].apply(formatar_valor_total)
+    df["_valor_exib"] = df["_valor_total_principal"].fillna(df["_valor_item"])
+    # Se item não tem valor, cai para valor_total_estimado do edital
+    df["_valor_exib"] = df["_valor_exib"].where(
+        df["_valor_exib"].fillna(0) > 0, df["valor_total_estimado"]
+    )
+    df["valor_total_fmt"] = df["_valor_exib"].apply(formatar_valor_total)
 
     return df
 
@@ -304,8 +344,8 @@ total_editais = len(df_ativos)
 total_estados = df_ativos["uf"].nunique()
 urgentes = len(df_f[df_f["status"] == "⚠️ Urgente"])
 
-# Valor correto: usa valor_total_estimado do banco
-valor_total = df_ativos["valor_total_estimado"].fillna(0).astype(float).sum()
+# Valor correto: soma dos itens cannabis (item principal de cada edital)
+valor_total = df_ativos["_valor_exib"].fillna(0).astype(float).sum()
 
 def fmt_moeda(v):
     if v <= 0:
@@ -393,7 +433,7 @@ with aba1:
         "produto": "Produto",
         "qtd_total": "Qtd.",
         "preco_unit_max": "Preço Unit.",
-        "valor_total_estimado": "Valor Total",
+        "_valor_exib": "Valor Total",
         "prazo": "Prazo",
         "status": "Status",
         "link_pncp": "Edital",
@@ -479,7 +519,7 @@ with aba2:
         with col2:
             st.markdown("#### Valor Estimado por Estado (R$)")
             por_uf_val = (
-                df_anal.groupby("uf")["valor_total_estimado"]
+                df_anal.groupby("uf")["_valor_exib"]
                 .sum().fillna(0).sort_values(ascending=False).reset_index()
             )
             por_uf_val.columns = ["UF", "Valor (R$)"]
@@ -498,7 +538,7 @@ with aba2:
         with col4:
             st.markdown("#### Valor por Modalidade (R$)")
             por_mod_val = (
-                df_anal.groupby("modalidade")["valor_total_estimado"]
+                df_anal.groupby("modalidade")["_valor_exib"]
                 .sum().fillna(0).sort_values(ascending=False).reset_index()
             )
             por_mod_val.columns = ["Modalidade", "Valor (R$)"]
