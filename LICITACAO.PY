@@ -37,7 +37,7 @@ if not CHAT_ID:
 if not SUPABASE_URL:
     SUPABASE_URL = "https://clcaoyrqhkxirfekcxot.supabase.co"
 if not SUPABASE_KEY:
-    SUPABASE_KEY = "sb_publishable_4gTDfatSOwa5X4CJSnPRIQ_vBUJXb99"
+    SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNsY2FveXJxaGt4aXJmZWtjeG90Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE4NzUzNTUsImV4cCI6MjA4NzQ1MTM1NX0.vwTN5ACAylYO-FMQ5iEubJ2I-vZ9YMUHG-7pXk2YIOg"
 
 SUPABASE_HEADERS = {
     "apikey": SUPABASE_KEY,
@@ -289,48 +289,96 @@ def buscar_itens_relevantes(cnpj, ano, seq):
     return itens_texto, itens_banco, valor_total
 
 
-def buscar_contratacoes_pagina(data_inicial, data_final, modalidade, pagina=1):
-    url = f"{PNCP_API_BASE}/contratacoes/publicacao"
+# ─── API SEARCH (igual ao Make) — busca por data de DIVULGAÇÃO no PNCP ─────────
+KEYWORDS_BUSCA = ["canabidiol", "cannabis", "CBD"]
+
+
+def buscar_search_api(keyword, data_fmt, pagina=1, tam_pagina=20):
+    """Usa a API de busca textual do PNCP — retorna por data de divulgação."""
+    url = "https://pncp.gov.br/api/search/"
     params = {
-        "dataInicial": data_inicial,
-        "dataFinal": data_final,
-        "codigoModalidadeContratacao": modalidade,
-        "tamanhoPagina": TAMANHO_PAGINA,
+        "q": keyword,
+        "tipos_documento": "edital",
+        "ordenacao": "-data",
         "pagina": pagina,
+        "tam_pagina": tam_pagina,
     }
     try:
-        r = requests.get(url, params=params, timeout=60)
+        r = requests.get(url, params=params, headers=PNCP_HEADERS, timeout=30)
         if r.status_code == 200:
-            return r.json().get("data", [])
-        elif r.status_code == 204:
-            return []
-        else:
-            log.warning(f"API PNCP {r.status_code} mod={modalidade} pag={pagina}")
-            return []
+            dados = r.json()
+            items = dados.get("items", [])
+            # Filtra apenas divulgados na data alvo
+            filtrados = [
+                i for i in items
+                if (i.get("data_publicacao_pncp") or "").startswith(data_fmt)
+            ]
+            return filtrados
+        return []
     except requests.exceptions.Timeout:
-        log.warning(f"Timeout mod={modalidade} pag={pagina}")
+        log.warning(f"Timeout search keyword='{keyword}' pag={pagina}")
         return []
     except Exception as e:
-        log.error(f"Erro API PNCP: {e}")
+        log.error(f"Erro search API: {e}")
         return []
 
 
-def buscar_todas_contratacoes(data_inicial, data_final, modalidade):
-    todas = []
-    pagina = 1
-    while True:
-        res = buscar_contratacoes_pagina(data_inicial, data_final, modalidade, pagina)
-        if not res:
-            break
-        todas.extend(res)
-        if len(res) < TAMANHO_PAGINA:
-            break
-        pagina += 1
-        time.sleep(0.3)
-        if pagina > 20:
-            log.warning(f"Limite de páginas atingido mod={modalidade}")
-            break
-    return todas
+def normalizar_item_search(item):
+    """Converte item da API search para o formato usado por processar_contratacao."""
+    cnpj = item.get("orgao_cnpj", "")
+    ano = item.get("ano", "")
+    seq = item.get("numero_sequencial", "")
+    return {
+        "objetoCompra": item.get("description", item.get("title", "")),
+        "orgaoEntidade": {
+            "cnpj": cnpj,
+            "razaoSocial": item.get("orgao_nome", ""),
+        },
+        "unidadeOrgao": {
+            "ufSigla": item.get("uf", ""),
+            "municipioNome": item.get("municipio_nome", ""),
+        },
+        "anoCompra": ano,
+        "sequencialCompra": seq,
+        "modalidadeNome": item.get("modalidade_licitacao_nome", ""),
+        "dataPublicacaoPncp": item.get("data_publicacao_pncp"),
+        "dataAberturaProposta": item.get("data_inicio_vigencia"),
+        "dataEncerramentoProposta": item.get("data_fim_vigencia"),
+        "valorTotalEstimado": item.get("valor_total_estimado"),
+        "numeroCompra": item.get("numero_sequencial", ""),
+        "numeroControlePNCP": item.get("item_url", ""),
+        "linkSistemaOrigem": "",
+        "_source": "search",
+    }
+
+
+def buscar_por_search(data_str):
+    """Busca todas as licitações cannabis divulgadas no dia via API search."""
+    data_fmt = datetime.datetime.strptime(data_str, "%Y%m%d").strftime("%Y-%m-%d")
+    todos = {}  # url_id -> item (deduplicado entre keywords)
+
+    for kw in KEYWORDS_BUSCA:
+        log.info(f"   🔍 Search '{kw}'...")
+        pagina = 1
+        while True:
+            items = buscar_search_api(kw, data_fmt, pagina=pagina)
+            for item in items:
+                cnpj = item.get("orgao_cnpj", "")
+                ano = item.get("ano", "")
+                seq = item.get("numero_sequencial", "")
+                if cnpj and ano and seq:
+                    url_id = f"/compras/{cnpj}/{ano}/{seq}"
+                    if url_id not in todos:
+                        todos[url_id] = normalizar_item_search(item)
+            if len(items) < 20:
+                break
+            pagina += 1
+            time.sleep(0.2)
+            if pagina > 10:
+                break
+
+    log.info(f"   📋 Search encontrou: {len(todos)} editais únicos divulgados em {data_fmt}")
+    return list(todos.values())
 
 
 # ================= SUPABASE =================
@@ -491,7 +539,11 @@ def enviar_telegram(edital, itens_texto, modalidade_label):
 def processar_contratacao(item):
     objeto = item.get("objetoCompra", "")
 
-    if not keyword_match(objeto):
+    # Se veio da API search (_source="search"), já foi filtrado pelo PNCP — não rejeitar pelo objeto
+    # Se veio de outra fonte, aplicar keyword_match normalmente
+    from_search = item.get("_source") == "search"
+
+    if not from_search and not keyword_match(objeto):
         return False
 
     if objeto_bloqueado(objeto):
@@ -523,8 +575,19 @@ def processar_contratacao(item):
     time.sleep(0.3)
 
     if not itens_banco:
-        log.info(f"   ⏭️  Objeto tinha keyword mas nenhum ITEM confirmou — ignorando")
-        return False
+        # Se veio da API search, o PNCP já confirmou relevância — salva mesmo sem itens
+        if from_search:
+            log.info(f"   ⚠️  API de itens vazia mas origem é search PNCP — salvando com fallback")
+        else:
+            # Fallback: se o próprio objeto menciona cannabis/canabidiol explicitamente
+            KEYWORDS_FORTES = ["canabidiol", "cannabis", "cannabidiol"]
+            objeto_lower = objeto.lower()
+            tem_keyword_forte = any(kw in objeto_lower for kw in KEYWORDS_FORTES)
+            if tem_keyword_forte:
+                log.info(f"   ⚠️  API de itens vazia mas objeto menciona cannabis — salvando com fallback")
+            else:
+                log.info(f"   ⏭️  Objeto tinha keyword mas nenhum ITEM confirmou — ignorando")
+                return False
 
     valor_listagem = item.get("valorTotalEstimado")
     try:
@@ -743,10 +806,10 @@ def main():
         else:
             log.info(f"📅 Período: hoje {hoje.strftime('%d/%m/%Y')} (execução intradiária)")
 
-    log.info(f"🔑 Keywords: {', '.join(KEYWORDS)}")
-    log.info(f"📊 Modalidades: {MODALIDADES}")
+    log.info(f"🔑 Keywords busca: {', '.join(KEYWORDS_BUSCA)}")
     log.info(f"📅 ATUALIZAR_DATAS: {ATUALIZAR_DATAS}")
     log.info(f"ℹ️  Existentes: {'atualiza datas faltantes' if ATUALIZAR_DATAS else 'ignora'}")
+    log.info(f"🔍 Fonte: API Search PNCP (por data de divulgação)")
 
     total_analisadas = 0
     total_encontradas = 0
@@ -756,20 +819,17 @@ def main():
         dia_str = dia.strftime("%Y%m%d")
         log.info(f"\n📆 Processando dia: {dia.strftime('%d/%m/%Y')}")
 
-        for modalidade in MODALIDADES:
-            contratacoes = buscar_todas_contratacoes(dia_str, dia_str, modalidade)
-            if contratacoes:
-                log.info(f"   Mod {modalidade}: {len(contratacoes)} contratações")
-            total_analisadas += len(contratacoes)
+        # ── API SEARCH (fonte primária — por data de DIVULGAÇÃO, igual ao Make) ──
+        contratacoes = buscar_por_search(dia_str)
+        total_analisadas += len(contratacoes)
 
-            for item in contratacoes:
-                if keyword_match(item.get("objetoCompra", "")):
-                    total_encontradas += 1
-                    log.info(f"   🎯 Match: {item.get('objetoCompra', '')[:80]}...")
-                    if processar_contratacao(item):
-                        total_novas += 1
+        for item in contratacoes:
+            total_encontradas += 1
+            log.info(f"   🎯 Match search: {item.get('objetoCompra', '')[:80]}...")
+            if processar_contratacao(item):
+                total_novas += 1
 
-            time.sleep(0.3)
+        time.sleep(0.3)
 
     log.info("=" * 60)
     log.info("📊 RESUMO:")
