@@ -267,12 +267,15 @@ def enviar_telegram(edital, apresentacoes_texto, tag):
     if valor and valor > 0:
         bloco_valor = f"\n💰 <b>Valor estimado:</b> R$ {valor:,.2f}"
 
-    link_pncp = f"https://pncp.gov.br/app/editais{edital.get('url_id', '')}"
+    # url_id = /compras/cnpj/ano/seq → link PNCP = /cnpj/ano/seq
+    url_id = edital.get('url_id', '')
+    link_path = url_id.replace("/compras/", "/", 1) if url_id.startswith("/compras/") else url_id
+    link_pncp = f"https://pncp.gov.br/app/editais{link_path}"
 
     msg = f"""🏛️ <b>NOVA LICITAÇÃO - ALTO CUSTO</b>
 {tag}
 
-📋 <b>Objeto:</b> {edital.get('titulo', 'N/A')[:300]}
+📋 <b>Objeto:</b> {edital.get('objeto', edital.get('titulo', 'N/A'))[:300]}
 🏢 <b>Órgão:</b> {edital.get('orgao', 'N/A')}
 📍 <b>UF:</b> {edital.get('uf', 'N/A')}
 📑 <b>Modalidade:</b> {edital.get('modalidade', 'N/A')}{bloco_valor}
