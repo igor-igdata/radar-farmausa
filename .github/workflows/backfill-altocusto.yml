@@ -1,0 +1,25 @@
+name: Backfill Alto Custo 2026
+
+on:
+  workflow_dispatch:  # apenas manual
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300  # 5 horas máximo (são ~75 dias × 40 keywords)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Instalar dependências
+        run: pip install requests
+
+      - name: Executar Backfill Alto Custo
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID_ALTOCUSTO: ${{ secrets.TELEGRAM_CHAT_ID_ALTOCUSTO }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python BACKFILL_ALTOCUSTO.py
