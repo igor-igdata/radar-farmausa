@@ -12,7 +12,8 @@ Mesma arquitetura do Radar Alto Custo / FarmaUSA Cannabis:
 - Envia alerta formatado no Telegram com produtos, prazos e links
 
 Medicamentos monitorados:
-🔬 ONCOLÓGICOS: Keytruda, Jakafi, Xtandi, Votrient, Crysvita, Lisodren
+🔬 ONCOLÓGICOS: Keytruda, Jakafi, Xtandi, Votrient, Crysvita, Lisodren,
+                Endoxan, Iclusig, Idhifa, Tagrisso, Lynparza, Imbruvica
 🧬 IMUNOLÓGICOS/NEURO/AUTOIMUNE: Ocrevus, Vyvgart, Skyrizi, Entyvio, Aduhelm
 🧠 EPILEPSIA/NEUROLÓGICOS: Briviact, Fampyra, Ospolot, Ontozry
 💊 OUTROS: Proglicem, Biktarvy
@@ -66,7 +67,7 @@ TABELA_EDITAIS = "editais_nsc"
 TABELA_ITENS = "itens_nsc"
 
 # ================= KEYWORDS NSC =================
-# Keywords completas para filtrar nos itens/objeto — 17 medicamentos estratégicos
+# Keywords completas para filtrar nos itens/objeto — 23 medicamentos estratégicos
 
 KEYWORDS = [
     # 🔬 ONCOLÓGICOS
@@ -84,6 +85,20 @@ KEYWORDS = [
     "burosumabe", "burosumab", "crysvita",
     # Lisodren (mitotano)
     "mitotano", "mitotane", "lisodren",
+    # Endoxan (ciclofosfamida)
+    "ciclofosfamida", "cyclophosphamide", "endoxan",
+    # Iclusig (ponatinibe)
+    "ponatinibe", "ponatinib", "iclusig",
+    # Idhifa (enasidenibe)
+    "enasidenibe", "enasidenib", "idhifa",
+    # Tagrisso (osimertinibe)
+    "osimertinibe", "osimertinib", "tagrisso",
+    # Lynparza (olaparibe)
+    "olaparibe", "olaparib", "lynparza",
+    "inibidor de PARP", "inibidor PARP",
+    # Imbruvica (ibrutinibe)
+    "ibrutinibe", "ibrutinib", "imbruvica",
+    "inibidor de BTK", "inibidor BTK",
 
     # 🧬 IMUNOLÓGICOS / NEURO / AUTOIMUNE
     # Ocrevus (ocrelizumabe)
@@ -130,6 +145,12 @@ KEYWORDS_BUSCA = [
     "pazopanibe", "votrient",
     "burosumabe", "crysvita",
     "mitotano", "lisodren",
+    "ciclofosfamida", "endoxan",
+    "ponatinibe", "iclusig",
+    "enasidenibe", "idhifa",
+    "osimertinibe", "tagrisso",
+    "olaparibe", "lynparza",
+    "ibrutinibe", "imbruvica",
     # Imunológicos / Neuro / Autoimune
     "ocrelizumabe", "ocrevus",
     "efgartigimode", "vyvgart",
@@ -172,6 +193,28 @@ MEDICAMENTO_CATEGORIA = {
     "mitotano": ("Lisodren", "🔬 Oncológico"),
     "mitotane": ("Lisodren", "🔬 Oncológico"),
     "lisodren": ("Lisodren", "🔬 Oncológico"),
+    "ciclofosfamida": ("Endoxan", "🔬 Oncológico"),
+    "cyclophosphamide": ("Endoxan", "🔬 Oncológico"),
+    "endoxan": ("Endoxan", "🔬 Oncológico"),
+    "ponatinibe": ("Iclusig", "🔬 Oncológico"),
+    "ponatinib": ("Iclusig", "🔬 Oncológico"),
+    "iclusig": ("Iclusig", "🔬 Oncológico"),
+    "enasidenibe": ("Idhifa", "🔬 Oncológico"),
+    "enasidenib": ("Idhifa", "🔬 Oncológico"),
+    "idhifa": ("Idhifa", "🔬 Oncológico"),
+    "osimertinibe": ("Tagrisso", "🔬 Oncológico"),
+    "osimertinib": ("Tagrisso", "🔬 Oncológico"),
+    "tagrisso": ("Tagrisso", "🔬 Oncológico"),
+    "olaparibe": ("Lynparza", "🔬 Oncológico"),
+    "olaparib": ("Lynparza", "🔬 Oncológico"),
+    "lynparza": ("Lynparza", "🔬 Oncológico"),
+    "inibidor de parp": ("Lynparza", "🔬 Oncológico"),
+    "inibidor parp": ("Lynparza", "🔬 Oncológico"),
+    "ibrutinibe": ("Imbruvica", "🔬 Oncológico"),
+    "ibrutinib": ("Imbruvica", "🔬 Oncológico"),
+    "imbruvica": ("Imbruvica", "🔬 Oncológico"),
+    "inibidor de btk": ("Imbruvica", "🔬 Oncológico"),
+    "inibidor btk": ("Imbruvica", "🔬 Oncológico"),
     "ocrelizumabe": ("Ocrevus", "🧬 Imunológico"),
     "ocrelizumab": ("Ocrevus", "🧬 Imunológico"),
     "ocrevus": ("Ocrevus", "🧬 Imunológico"),
