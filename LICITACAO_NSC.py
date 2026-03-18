@@ -13,7 +13,8 @@ Mesma arquitetura do Radar Alto Custo / FarmaUSA Cannabis:
 
 Medicamentos monitorados:
 🔬 ONCOLÓGICOS: Keytruda, Jakafi, Xtandi, Votrient, Crysvita, Lisodren,
-                Endoxan, Iclusig, Idhifa, Tagrisso, Lynparza, Imbruvica
+                Endoxan, Iclusig, Idhifa, Tagrisso, Lynparza, Imbruvica,
+                Metotrexato, Doxorrubicina
 🧬 IMUNOLÓGICOS/NEURO/AUTOIMUNE: Ocrevus, Vyvgart, Skyrizi, Entyvio, Aduhelm
 🧠 EPILEPSIA/NEUROLÓGICOS: Briviact, Fampyra, Ospolot, Ontozry
 💊 OUTROS: Proglicem, Biktarvy
@@ -99,6 +100,10 @@ KEYWORDS = [
     # Imbruvica (ibrutinibe)
     "ibrutinibe", "ibrutinib", "imbruvica",
     "inibidor de BTK", "inibidor BTK",
+    # Metotrexato (Metrexato / Miantrex / Trexan)
+    "metotrexato", "methotrexate", "metrexato", "miantrex", "trexan",
+    # Doxorrubicina (Adriblastina / Doxolem / Rubidox)
+    "doxorrubicina", "doxorubicin", "adriblastina", "doxolem", "rubidox",
 
     # 🧬 IMUNOLÓGICOS / NEURO / AUTOIMUNE
     # Ocrevus (ocrelizumabe)
@@ -151,6 +156,8 @@ KEYWORDS_BUSCA = [
     "osimertinibe", "tagrisso",
     "olaparibe", "lynparza",
     "ibrutinibe", "imbruvica",
+    "metotrexato", "metrexato",
+    "doxorrubicina", "adriblastina",
     # Imunológicos / Neuro / Autoimune
     "ocrelizumabe", "ocrevus",
     "efgartigimode", "vyvgart",
@@ -215,6 +222,16 @@ MEDICAMENTO_CATEGORIA = {
     "imbruvica": ("Imbruvica", "🔬 Oncológico"),
     "inibidor de btk": ("Imbruvica", "🔬 Oncológico"),
     "inibidor btk": ("Imbruvica", "🔬 Oncológico"),
+    "metotrexato": ("Metotrexato", "🔬 Oncológico"),
+    "methotrexate": ("Metotrexato", "🔬 Oncológico"),
+    "metrexato": ("Metotrexato", "🔬 Oncológico"),
+    "miantrex": ("Metotrexato", "🔬 Oncológico"),
+    "trexan": ("Metotrexato", "🔬 Oncológico"),
+    "doxorrubicina": ("Doxorrubicina", "🔬 Oncológico"),
+    "doxorubicin": ("Doxorrubicina", "🔬 Oncológico"),
+    "adriblastina": ("Doxorrubicina", "🔬 Oncológico"),
+    "doxolem": ("Doxorrubicina", "🔬 Oncológico"),
+    "rubidox": ("Doxorrubicina", "🔬 Oncológico"),
     "ocrelizumabe": ("Ocrevus", "🧬 Imunológico"),
     "ocrelizumab": ("Ocrevus", "🧬 Imunológico"),
     "ocrevus": ("Ocrevus", "🧬 Imunológico"),
