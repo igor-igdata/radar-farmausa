@@ -1,0 +1,46 @@
+name: Radar NSC - Medicamentos Estratégicos
+
+on:
+  schedule:
+    # 6 execuções/dia (horário UTC → Brasília = UTC-3)
+    - cron: '30 11 * * *'   # 08:30 BRT
+    - cron: '30 13 * * *'   # 10:30 BRT
+    - cron: '30 15 * * *'   # 12:30 BRT
+    - cron: '30 17 * * *'   # 14:30 BRT
+    - cron: '30 19 * * *'   # 16:30 BRT
+    - cron: '30 21 * * *'   # 18:30 BRT (última + resumo diário)
+  workflow_dispatch:          # Botão "Run workflow" manual
+
+env:
+  TELEGRAM_BOT_TOKEN_NSC: ${{ secrets.TELEGRAM_BOT_TOKEN_NSC }}
+  TELEGRAM_CHAT_ID_NSC: ${{ secrets.TELEGRAM_CHAT_ID_NSC }}
+  SUPABASE_URL_NSC: ${{ secrets.SUPABASE_URL_NSC }}
+  SUPABASE_KEY_NSC: ${{ secrets.SUPABASE_KEY_NSC }}
+
+jobs:
+  radar_nsc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Puxar arquivos do repositório
+        uses: actions/checkout@v4
+
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependências
+        run: pip install requests
+
+      - name: Executar Radar NSC
+        run: python LICITACAO_NSC.py
+
+      - name: Notificar falha no Telegram
+        if: failure()
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN_NSC}/sendMessage" \
+            -d chat_id="${TELEGRAM_CHAT_ID_NSC}" \
+            -d text="⚠️ <b>Radar NSC</b>%0AO robô falhou na execução das $(date +'%d/%m/%Y %H:%M') UTC.%0A%0AVerifique em: https://github.com/igor-igdata/radar-farmausa/actions" \
+            -d parse_mode="HTML"
