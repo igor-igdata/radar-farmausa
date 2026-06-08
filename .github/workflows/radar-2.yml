@@ -35,7 +35,7 @@ jobs:
         run: pip install requests
 
       - name: Executar Radar NSC
-        run: python LICITACAO_NSC.py
+        run: python LICITACAO_2.py
 
       - name: Notificar falha no Telegram
         if: failure()
