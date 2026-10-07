@@ -518,7 +518,7 @@ def buscar_itens_relevantes(cnpj, ano, seq):
 # Cada execução grava uma linha em execucoes_radar (histórico + mantém o Supabase ativo).
 RADAR_NOME = "nsc"
 RESUMO_EXEC = {"analisadas": 0, "encontradas": 0, "novas": 0, "buscas_com_erro": 0}
-PAUSA_ENTRE_BUSCAS = 1.5  # segundos entre buscas no PNCP (evita bloqueio por excesso de requisições)
+PAUSA_ENTRE_BUSCAS = 1.0  # segundos entre buscas no PNCP (evita bloqueio por excesso de requisições)
 
 
 def _get_pncp_com_retry(url, params, tentativas=4):
@@ -541,6 +541,31 @@ def _get_pncp_com_retry(url, params, tentativas=4):
             espera *= 2
 
 
+ESPERA_SEGUNDA_PASSADA = 30  # segundos antes de tentar de novo as buscas que falharam
+_KW_FALHAS = []
+
+
+def _keywords_com_segunda_passada(keywords):
+    """Entrega todas as keywords; no fim, espera e repete só as que falharam."""
+    _KW_FALHAS.clear()
+    for kw in keywords:
+        yield kw
+    falhas = list(dict.fromkeys(_KW_FALHAS))
+    if not falhas:
+        return
+    log.info(f"🔁 Segunda passada: {len(falhas)} busca(s) falharam, aguardando {ESPERA_SEGUNDA_PASSADA}s para repetir")
+    time.sleep(ESPERA_SEGUNDA_PASSADA)
+    _KW_FALHAS.clear()
+    for kw in falhas:
+        yield kw
+    restantes = list(dict.fromkeys(_KW_FALHAS))
+    RESUMO_EXEC["buscas_com_erro"] += len(restantes)
+    if restantes:
+        log.warning(f"   ⚠️ Ainda sem resposta após a segunda passada: {', '.join(restantes)}")
+    else:
+        log.info(f"   ✅ Segunda passada recuperou as {len(falhas)} busca(s)")
+
+
 def buscar_search_api(keyword, data_fmt, pagina=1, tam_pagina=20):
     url = "https://pncp.gov.br/api/search/"
     params = {
@@ -560,15 +585,15 @@ def buscar_search_api(keyword, data_fmt, pagina=1, tam_pagina=20):
                 if (i.get("data_publicacao_pncp") or "").startswith(data_fmt)
             ]
             return filtrados
-        RESUMO_EXEC["buscas_com_erro"] += 1
+        _KW_FALHAS.append(keyword)
         log.error(f"Search API status {r.status_code} keyword={keyword!r}")
         return []
     except requests.exceptions.Timeout:
-        RESUMO_EXEC["buscas_com_erro"] += 1
+        _KW_FALHAS.append(keyword)
         log.warning(f"Timeout search keyword='{keyword}' pag={pagina}")
         return []
     except Exception as e:
-        RESUMO_EXEC["buscas_com_erro"] += 1
+        _KW_FALHAS.append(keyword)
         log.error(f"Erro search API: {e}")
         return []
 
@@ -605,7 +630,7 @@ def buscar_por_search(data_str):
     data_fmt = datetime.datetime.strptime(data_str, "%Y%m%d").strftime("%Y-%m-%d")
     todos = {}
 
-    for kw in KEYWORDS_BUSCA:
+    for kw in _keywords_com_segunda_passada(KEYWORDS_BUSCA):
         log.info(f"   🔍 Search '{kw}'...")
         pagina = 1
         while True:
