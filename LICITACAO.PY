@@ -297,6 +297,7 @@ KEYWORDS_BUSCA = ["canabidiol", "cannabis", "CBD"]
 # Cada execução grava uma linha em execucoes_radar (histórico + mantém o Supabase ativo).
 RADAR_NOME = "cannabis"
 RESUMO_EXEC = {"analisadas": 0, "encontradas": 0, "novas": 0, "buscas_com_erro": 0}
+PAUSA_ENTRE_BUSCAS = 1.5  # segundos entre buscas no PNCP (evita bloqueio por excesso de requisições)
 
 
 def _get_pncp_com_retry(url, params, tentativas=4):
@@ -403,9 +404,10 @@ def buscar_por_search(data_str):
             if len(items) < 20:
                 break
             pagina += 1
-            time.sleep(0.2)
+            time.sleep(PAUSA_ENTRE_BUSCAS)
             if pagina > 10:
                 break
+        time.sleep(PAUSA_ENTRE_BUSCAS)
 
     log.info(f"   📋 Search encontrou: {len(todos)} editais únicos divulgados em {data_fmt}")
     return list(todos.values())
