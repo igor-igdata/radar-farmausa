@@ -293,6 +293,32 @@ def buscar_itens_relevantes(cnpj, ano, seq):
 KEYWORDS_BUSCA = ["canabidiol", "cannabis", "CBD"]
 
 
+# ================= LOG DE EXECUÇÃO + RETRY PNCP =================
+# Cada execução grava uma linha em execucoes_radar (histórico + mantém o Supabase ativo).
+RADAR_NOME = "cannabis"
+RESUMO_EXEC = {"analisadas": 0, "encontradas": 0, "novas": 0, "buscas_com_erro": 0}
+
+
+def _get_pncp_com_retry(url, params, tentativas=4):
+    """GET no PNCP com nova tentativa quando a API derruba a conexão ou responde 429/5xx."""
+    espera = 2
+    for tentativa in range(1, tentativas + 1):
+        try:
+            r = requests.get(url, params=params, headers=PNCP_HEADERS, timeout=30)
+            if r.status_code in (429, 500, 502, 503, 504) and tentativa < tentativas:
+                log.warning(f"PNCP respondeu {r.status_code} (tentativa {tentativa}/{tentativas}), aguardando {espera}s")
+                time.sleep(espera)
+                espera *= 2
+                continue
+            return r
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            if tentativa == tentativas:
+                raise
+            log.warning(f"PNCP recusou a conexão (tentativa {tentativa}/{tentativas}), aguardando {espera}s: {e.__class__.__name__}")
+            time.sleep(espera)
+            espera *= 2
+
+
 def buscar_search_api(keyword, data_fmt, pagina=1, tam_pagina=20):
     """Usa a API de busca textual do PNCP — retorna por data de divulgação."""
     url = "https://pncp.gov.br/api/search/"
@@ -304,7 +330,7 @@ def buscar_search_api(keyword, data_fmt, pagina=1, tam_pagina=20):
         "tam_pagina": tam_pagina,
     }
     try:
-        r = requests.get(url, params=params, headers=PNCP_HEADERS, timeout=30)
+        r = _get_pncp_com_retry(url, params)
         if r.status_code == 200:
             dados = r.json()
             items = dados.get("items", [])
@@ -314,11 +340,15 @@ def buscar_search_api(keyword, data_fmt, pagina=1, tam_pagina=20):
                 if (i.get("data_publicacao_pncp") or "").startswith(data_fmt)
             ]
             return filtrados
+        RESUMO_EXEC["buscas_com_erro"] += 1
+        log.error(f"Search API status {r.status_code} keyword={keyword!r}")
         return []
     except requests.exceptions.Timeout:
+        RESUMO_EXEC["buscas_com_erro"] += 1
         log.warning(f"Timeout search keyword='{keyword}' pag={pagina}")
         return []
     except Exception as e:
+        RESUMO_EXEC["buscas_com_erro"] += 1
         log.error(f"Erro search API: {e}")
         return []
 
@@ -832,7 +862,10 @@ def main():
         time.sleep(0.3)
 
     log.info("=" * 60)
+    RESUMO_EXEC.update(analisadas=total_analisadas, encontradas=total_encontradas, novas=total_novas)
     log.info("📊 RESUMO:")
+    if RESUMO_EXEC["buscas_com_erro"]:
+        log.warning(f"   ⚠️ Buscas que falharam mesmo após retry: {RESUMO_EXEC['buscas_com_erro']}")
     log.info(f"   Analisadas:        {total_analisadas}")
     log.info(f"   Com cannabis:      {total_encontradas}")
     log.info(f"   Novas (Telegram):  {total_novas}")
@@ -845,5 +878,48 @@ def main():
             enviar_resumo_dia()
 
 
+def registrar_execucao(inicio, status, erro=None):
+    """Grava uma linha em execucoes_radar. Nunca derruba o radar se falhar."""
+    try:
+        fim = datetime.datetime.now(datetime.timezone.utc)
+        payload = {
+            "radar": RADAR_NOME,
+            "iniciado_em": inicio.isoformat(),
+            "finalizado_em": fim.isoformat(),
+            "duracao_seg": round((fim - inicio).total_seconds(), 1),
+            "editais_analisados": RESUMO_EXEC["analisadas"],
+            "com_match": RESUMO_EXEC["encontradas"],
+            "novos": RESUMO_EXEC["novas"],
+            "buscas_com_erro": RESUMO_EXEC["buscas_com_erro"],
+            "status": status,
+            "erro": erro,
+            "github_run_id": os.environ.get("GITHUB_RUN_ID"),
+        }
+        r = requests.post(
+            f"{SUPABASE_URL}/rest/v1/execucoes_radar",
+            headers={**SUPABASE_HEADERS, "Prefer": "return=minimal"},
+            json=payload,
+            timeout=10,
+        )
+        if r.status_code in (200, 201, 204):
+            log.info(f"📝 Execução registrada em execucoes_radar ({status})")
+        else:
+            log.warning(f"Não foi possível registrar execução: {r.status_code} {r.text[:200]}")
+    except Exception as e:
+        log.warning(f"Não foi possível registrar execução: {e}")
+
+
 if __name__ == "__main__":
-    main()
+    _inicio = datetime.datetime.now(datetime.timezone.utc)
+    _status, _erro = "ok", None
+    try:
+        main()
+    except SystemExit as e:
+        if e.code not in (0, None):
+            _status, _erro = "erro", f"sys.exit({e.code})"
+        raise
+    except Exception as e:
+        _status, _erro = "erro", repr(e)[:500]
+        raise
+    finally:
+        registrar_execucao(_inicio, _status, _erro)
