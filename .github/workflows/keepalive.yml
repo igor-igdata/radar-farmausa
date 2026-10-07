@@ -1,0 +1,27 @@
+name: Keep-alive mensal
+
+# O GitHub desativa workflows agendados em repositórios públicos
+# depois de 60 dias sem atividade. Este job faz um commit vazio
+# todo dia 1 para manter os radares sempre ativos.
+
+on:
+  schedule:
+    - cron: "17 12 1 * *"   # dia 1 de cada mês, 09:17 de Brasília
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Puxar repositório
+        uses: actions/checkout@v4
+
+      - name: Commit vazio
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --allow-empty -m "chore: keep-alive mensal dos radares [skip ci]"
+          git push
