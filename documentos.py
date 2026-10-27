@@ -221,12 +221,16 @@ def _anvisa(texto):
 
 def _me_epp(texto):
     t = _sem_acento(texto)
-    if re.search(r"nao havendo exclusividade|ampla (participacao|concorrencia)", t):
+    if "nao havendo exclusividade" in t:
         return "Ampla concorrência"
-    if "cota" in t:
+    # "cota reservada/exclusiva ... incorporado à cota principal/ampla participação":
+    # há cota, mesmo que o texto também cite a ampla
+    if re.search(r"cota (reservada|de ate 25)", t):
         return "Cota reservada ME/EPP"
     if "exclusiv" in t:
         return "Exclusivo ME/EPP"
+    if re.search(r"ampla (participacao|concorrencia)", t):
+        return "Ampla concorrência"
     return None
 
 
@@ -285,26 +289,29 @@ def classificar(a):
     return "outro"
 
 
-def _trecho(texto, inicio, fim, largura=260):
-    """Recorta a frase em volta do achado."""
+def _trecho(texto, inicio, fim, largura=260, ate=None):
+    """Recorta a frase em volta do achado. Com `ate`, vai pelo menos até ali:
+    o título "Prazo de entrega: 7.3.1." sozinho não diz o prazo, que vem depois."""
+    fim_minimo = max(fim, ate or fim)
     a = max(0, inicio - largura // 2)
-    b = min(len(texto), fim + largura)
+    b = min(len(texto), fim_minimo + largura)
     pedaco = texto[a:b]
     rel = inicio - a
     corte = max(pedaco.rfind(". ", 0, rel), pedaco.rfind("; ", 0, rel), pedaco.rfind("\n", 0, rel))
     if corte >= 0:
         pedaco, rel = pedaco[corte + 1:], rel - corte - 1
-    fim_frase = re.search(r"[.;](\s|$)", pedaco[rel + (fim - inicio):])
+    fim_rel = rel + (fim_minimo - inicio)
+    fim_frase = re.search(r"[.;](\s|$)", pedaco[fim_rel:])
     if fim_frase:
-        pedaco = pedaco[: rel + (fim - inicio) + fim_frase.end()]
-    return re.sub(r"\s+", " ", pedaco).strip()[:400]
+        pedaco = pedaco[: fim_rel + fim_frase.end()]
+    return re.sub(r"\s+", " ", pedaco).strip()[:450]
 
 
 def extrair_temas(texto):
     base = _sem_acento(texto)
     achados = {}
     for tema, (padrao, detalhe, vale_sem_detalhe, evitar) in TEMAS.items():
-        escolhido = None
+        escolhido, ate = None, None
         for n, m in enumerate(re.finditer(padrao, base)):
             if n >= 60:
                 break
@@ -313,13 +320,15 @@ def extrair_temas(texto):
                 continue
             if evitar and re.search(evitar, base[max(0, m.start() - 20): m.end() + 40]):
                 continue
-            if not detalhe or re.search(detalhe, janela):
+            achou = re.search(detalhe, janela) if detalhe else None
+            if not detalhe or achou:
                 escolhido = m
+                ate = m.start() + achou.end() if achou else None   # o trecho vai até o número
                 break
             if escolhido is None and vale_sem_detalhe:
                 escolhido = m
         if escolhido:
-            achados[tema] = _trecho(texto, escolhido.start(), escolhido.end())
+            achados[tema] = _trecho(texto, escolhido.start(), escolhido.end(), ate=ate)
     return achados
 
 

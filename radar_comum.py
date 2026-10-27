@@ -510,7 +510,16 @@ def _cabeca(edital, titulo):
             f"📋 {_esc(edital.get('titulo') or 'N/A')}")
 
 
+def fora_do_radar(edital):
+    """Pregão presencial: fica no banco, mas fora do painel e dos alertas
+    (pedido do time de licitação em 27/10/2026)."""
+    return "presencial" in normalizar(edital.get("modalidade"))
+
+
 def alerta_novo(radar, edital, escolhidos, compra=None):
+    if fora_do_radar(edital):
+        log.info("   🔕 Pregão presencial: gravado sem alerta")
+        return
     compra = compra or {}
     bloco_produtos = ""
     if escolhidos:
@@ -582,7 +591,7 @@ def alerta_atrasados(radar, lista):
     """Editais publicados há dias que só entraram agora pela varredura dos abertos
     (na primeira execução da v3 podem ser dezenas): uma mensagem de resumo em vez
     de um alerta por edital."""
-    lista = sorted(lista, key=lambda x: x[0].get("data_fim") or "9999")
+    lista = sorted([x for x in lista if not fora_do_radar(x[0])], key=lambda x: x[0].get("data_fim") or "9999")
     for n in range(0, len(lista), 20):
         linhas = []
         for edital, escolhidos in lista[n:n + 20]:
@@ -599,6 +608,8 @@ def alerta_atrasados(radar, lista):
 
 
 def alerta_prazo(radar, edital, fim_antigo, fim_novo):
+    if fora_do_radar(edital):
+        return
     prazo = formatar_prazo(fim_novo)
     msg = (_cabeca(edital, radar.cabecalho_alerta.format(tipo="PRAZO ALTERADO"))
            + f"\n\n🔴 Encerramento: {formatar_data_br(fim_antigo)} → <b>{formatar_data_br(fim_novo)}</b>"
@@ -607,7 +618,9 @@ def alerta_prazo(radar, edital, fim_antigo, fim_novo):
 
 
 def alerta_documento(radar, edital, novos, avisos):
-    linhas = [f"📄 <a href=\"{d['url']}\">{_esc(d['titulo'])}</a> ({_esc(d['tipo'])})" for d in novos[:6]]
+    if fora_do_radar(edital):
+        return
+    linhas =[f"📄 <a href=\"{d['url']}\">{_esc(d['titulo'])}</a> ({_esc(d['tipo'])})" for d in novos[:6]]
     if len(novos) > 6:
         linhas.append(f"… e mais {len(novos) - 6} documento(s)")
     for a in avisos[:3]:
@@ -618,7 +631,9 @@ def alerta_documento(radar, edital, novos, avisos):
 
 
 def alerta_situacao(radar, edital, situacao):
-    msg = (_cabeca(edital, radar.cabecalho_alerta.format(tipo="EDITAL " + situacao.upper()))
+    if fora_do_radar(edital):
+        return
+    msg =(_cabeca(edital, radar.cabecalho_alerta.format(tipo="EDITAL " + situacao.upper()))
            + "\n\n" + _rodape(edital))
     enviar_mensagem(radar, msg)
 
@@ -800,6 +815,7 @@ def enviar_resumo_dia(radar):
                      {"data_publicacao": f"gte.{hoje.isoformat()}T00:00:00"})
     if editais is None:
         return
+    editais = [e for e in editais if not fora_do_radar(e)]
     hoje_fmt = hoje.strftime("%d/%m/%Y")
     if not editais:
         enviar_mensagem(radar, f"📊 <b>Resumo do dia — {hoje_fmt}</b>\n\n"
