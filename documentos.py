@@ -58,20 +58,25 @@ TEMAS = {
     "validade": (r"validade (minima|nao inferior|de no minimo|remanescente|igual ou superior|superior a|de pelo menos)"
                  r"|prazo de validade|validade dos? (medicamentos?|produtos?|itens?|objeto)",
                  NUMERO + r"(%|por cento|mes|meses|dias|anos)", False,
-                 r"(validade|vigencia) (da|das|desta|de sua) (proposta|propostas|ata|registro)"),
+                 r"(validade|vigencia) (da|das|desta|de sua) (proposta|propostas|ata|registro)|certid|expresso"),
     "entrega": (r"prazo (maximo )?(de|para) (a )?entrega|prazo de fornecimento"
                 r"|entreg\w* (no prazo (maximo )?de |em |no maximo |dentro de |no prazo de )?(ate )?\d+",
                 NUMERO + r"(dias|horas)", False, r"entrega (das|da) (proposta|propostas|documentacao)"),
-    "anvisa": (r"registro (valido )?(na|no|junto a|junto ao|perante a) ?(anvisa|agencia nacional de vigilancia|ministerio da saude)"
-               r"|rdc (n\W{0,3})?327|autorizacao sanitaria|autorizacao de funcionamento", None, True, None),
+    "anvisa": (r"registro (valido |sanitario |vigente |ativo )?(na|no|junto a|junto ao|perante a|da|do) ?(anvisa|agencia nacional de vigilancia|ministerio da saude)"
+               r"|registro sanitario|registros? (do produto|dos produtos|do medicamento|dos medicamentos) (na|no|junto|perante)"
+               r"|rdc (n\W{0,3})?327|autorizacao sanitaria",
+               None, True, r"estrangeir"),
     "me_epp": (r"exclusiv\w* (para |a |as |de |a participacao de )?(me\b|microempresa|empresas de pequeno)"
                r"|cota (reservada|de ate 25)|nao havendo exclusividade|ampla (participacao|concorrencia)",
                None, True, None),
     "judicial": (r"mandados? judic|mandado de seguranca|ordens? judic|setor judicial|judicializad|demandas? judic"
                  r"|(atend\w+|cumpri\w+|para) (a |as |o |os |de |da |do |das |dos )?(decis\w+|determina\w+|aco\w+|processos?) judic",
                  None, True, None),
-    "marca": (r"marcas? (de referencia|referencia|especifica|exigida|padronizada|padrao)|referencia (de )?marca"
-              r"|exclusivamente (a|da) marca|padronizacao (de|da) marca|(ou|e) (similar|equivalente)"
+    # "marca" só quando o texto fala de marca mesmo (o "ou equivalente" solto
+    # pegava reagente de laboratório).
+    "marca": (r"marcas? (de referencia|referencia|especifica|exigida|padronizada|padrao|comercial)|referencia (de )?marca"
+              r"|exclusivamente (a|da) marca|padronizacao (de|da) marca|determinacao de marca|marca (comercial )?determinada"
+              r"|marcas?[^.;]{0,60}(similar|equivalente)|(similar|equivalente)[^.;]{0,40}\bmarcas?\b"
               r"|vedad\w* (a )?(indicacao|preferencia) (de|por) marca|nao (sera|serao) aceit\w* marca",
               None, True, None),
     "marca_proposta": (r"(indicar|informar|constar|cotar|especificar|mencionar|conter|declarar)\w* (a |as |obrigatoriamente (a |as )?)?marcas?"
@@ -114,6 +119,146 @@ def alertas_do_edital(arquivos, avisos, situacao):
     if "revogacao" in classes or re.search(r"revog|anul", _sem_acento(situacao or "")):
         saida.append("Revogação/anulação")
     return saida
+
+
+# ─── Ficha: a resposta curta de cada ponto, tirada do trecho ────────────────
+# O painel mostra a resposta ("24 meses", "Compras.gov.br") e guarda o trecho
+# só como prova. Sem resposta clara, fica o trecho.
+
+PLATAFORMAS = [
+    (r"\bbll\b|bllcompras|bolsa de licitacoes e leiloes", "BLL Compras"),
+    (r"\bbnc\b|bnccompras|bolsa nacional de compras", "BNC Compras"),
+    (r"licitanet", "Licitanet"),
+    (r"portal ?de ?compras ?publicas|portaldecompraspublicas|compraspublicas", "Portal de Compras Públicas"),
+    (r"compras\.gov\.br|comprasnet|gov\.br/compras", "Compras.gov.br"),
+    (r"licitacoes-e|licitacoes e do banco do brasil", "Licitações-e (Banco do Brasil)"),
+    (r"bec\.sp|bolsa eletronica de compras", "BEC/SP"),
+    (r"compras\.mg", "Compras MG"),
+    (r"licitar ?digital", "Licitar Digital"),
+    (r"ammlicita", "AMM Licita"),
+    (r"comprasbr|compras br\b", "ComprasBR"),
+    (r"bbm ?net", "BBMNET"),
+    (r"publinexo", "Publinexo"),
+    (r"banrisul", "Banrisul"),
+]
+MESES = ["janeiro", "fevereiro", "marco", "abril", "maio", "junho", "julho", "agosto",
+         "setembro", "outubro", "novembro", "dezembro"]
+
+
+def _quantidade(texto, unidades):
+    """ "validade mínima de 24 (vinte e quatro) meses" -> "24 meses" """
+    m = re.search(r"(\d{1,3}(?:,\d+)?)\s*(?:\([^)]{0,40}\)\s*)?(" + unidades + r")(?![a-z])(\s+(uteis|corridos))?", texto)
+    if not m:
+        return None
+    unidade = {"mes": "meses", "ano": "anos", "por cento": "%", "uteis": "úteis"}.get(m.group(2), m.group(2))
+    if m.group(1) in ("1", "01") and unidade in ("meses", "anos", "dias", "horas"):
+        unidade = unidade[:-1] if unidade != "meses" else "mês"
+    tipo = {"uteis": " úteis", "corridos": " corridos"}.get(m.group(4) or "", "")
+    numero = m.group(1).lstrip("0") or "0"
+    return f"{numero}%" if unidade == "%" else f"{numero} {unidade}{tipo}"
+
+
+DATA_NUM = r"(\d{1,2})\s*/\s*(\d{1,2})\s*/\s*(\d{4})"
+DATA_EXT = r"(\d{1,2}) de (" + "|".join(MESES) + r") de (\d{4})"
+HORA = r"(?<![\d/])(\d{1,2})\s*(?::\s*(\d{2})|h\s*:?\s*(\d{2})?)"
+
+
+def _data_hora(texto):
+    """Data e hora da sessão: a primeira data depois de "disputa", "sessão" ou
+    "abertura"; sem essas palavras, a última data do trecho (o período de
+    propostas termina na sessão)."""
+    t = _sem_acento(texto)
+    inicio, ultima = None, False
+    for chave in ("disputa", "sessao", "abertura"):
+        m = re.search(chave, t)
+        if m:
+            inicio = m.start()
+            break
+    if inicio is None:
+        inicio, ultima = 0, True
+    datas = [(m, m.groups()) for m in re.finditer(DATA_NUM, t[inicio:])]
+    datas += [(m, (m.group(1), str(MESES.index(m.group(2)) + 1), m.group(3))) for m in re.finditer(DATA_EXT, t[inicio:])]
+    if not datas:
+        return None
+    datas.sort(key=lambda x: x[0].start())
+    data, (dia, mes, ano) = datas[-1] if ultima else datas[0]
+    # a hora vem logo depois da data ("30/10/2026 às 09h") ou antes ("às 14:00h do dia 27 de outubro")
+    depois = t[inicio + data.end(): inicio + data.end() + 30]
+    antes = t[max(inicio, inicio + data.start() - 30): inicio + data.start()]
+    hora = re.search(HORA, depois) or (list(re.finditer(HORA, antes)) or [None])[-1]
+    texto_hora = ""
+    if hora and int(hora.group(1)) < 24:
+        minutos = hora.group(2) or hora.group(3)
+        texto_hora = f" às {int(hora.group(1)):02d}h" + (minutos if minutos and minutos != "00" else "")
+    return f"{int(dia):02d}/{int(mes):02d}/{ano}{texto_hora}"
+
+
+def _marca(texto):
+    t = _sem_acento(texto)
+    aceita_similar = re.search(r"similar|equivalente|meramente|indicativ|de melhor qualidade", t)
+    if "referencia" in t:
+        return "Indica marca de referência" + (" (aceita similar)" if aceita_similar else "")
+    if re.search(r"determinacao de marca|marca (comercial )?determinada|exclusivamente (a|da) marca"
+                 r"|marca especifica|padronizacao (de|da) marca", t):
+        return "Exige marca específica em algum item"
+    if re.search(r"vedad|nao (sera|serao) aceit", t):
+        return "Não pode exigir marca"
+    if aceita_similar:
+        return "Aceita similar ou equivalente"
+    return None
+
+
+def _anvisa(texto):
+    t = _sem_acento(texto)
+    if re.search(r"rdc (n\W{0,3})?327", t):
+        return "Cita a RDC 327 (produtos de cannabis)"
+    if "autorizacao sanitaria" in t:
+        return "Exige autorização sanitária"
+    if "registro" in t:
+        return "Exige registro na ANVISA"
+    return None
+
+
+def _me_epp(texto):
+    t = _sem_acento(texto)
+    if re.search(r"nao havendo exclusividade|ampla (participacao|concorrencia)", t):
+        return "Ampla concorrência"
+    if "cota" in t:
+        return "Cota reservada ME/EPP"
+    if "exclusiv" in t:
+        return "Exclusivo ME/EPP"
+    return None
+
+
+def montar_ficha(exig):
+    trecho = lambda k: (exig.get(k) or {}).get("trecho") or ""   # noqa: E731
+    ficha = {}
+    if trecho("sessao"):
+        ficha["sessao"] = _data_hora(trecho("sessao"))
+    if trecho("plataforma"):
+        t = _sem_acento(trecho("plataforma"))
+        nome = next((nome for padrao, nome in PLATAFORMAS if re.search(padrao, t)), None)
+        if not nome:   # plataforma que não está na lista: mostra o endereço
+            site = re.search(r"(www\.[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,})", t)
+            nome = site.group(1) if site and "tc.br" not in site.group(1) else None
+        ficha["plataforma"] = nome
+    if trecho("validade"):
+        q = _quantidade(_sem_acento(trecho("validade")), r"meses|mes|anos|ano|dias|%|por cento")
+        ficha["validade"] = f"Mínima de {q}" if q else None
+    if trecho("entrega"):
+        q = _quantidade(_sem_acento(trecho("entrega")), r"dias|dia|horas|hora")
+        ficha["entrega"] = f"Até {q}" if q else None
+    if trecho("marca"):
+        ficha["marca"] = _marca(trecho("marca"))
+    if trecho("marca_proposta"):
+        ficha["marca_proposta"] = "Proposta deve informar a marca"
+    if trecho("anvisa"):
+        ficha["anvisa"] = _anvisa(trecho("anvisa"))
+    if trecho("me_epp"):
+        ficha["me_epp"] = _me_epp(trecho("me_epp"))
+    if trecho("judicial"):
+        ficha["judicial"] = "Atende demanda judicial"
+    return {k: v for k, v in ficha.items() if v}
 
 
 def _sem_acento(t):
@@ -214,9 +359,10 @@ def texto_do_pdf(conteudo):
 
 
 class Leitor:
-    def __init__(self, radar, limite=MAX_PDFS_POR_EXECUCAO):
+    def __init__(self, radar, limite=MAX_PDFS_POR_EXECUCAO, forcar=False):
         self.radar = radar
         self.limite = limite
+        self.forcar = forcar   # relê tudo do zero (depois de mudar as regras de extração)
         self.pdfs = 0
         self.linhas = None
         self.ativo = True
@@ -276,7 +422,8 @@ class Leitor:
         antigo = self.linhas.get(url_id)
         situacao = compra.get("situacaoCompraNome") or ""
         marca = compra.get("dataAtualizacaoGlobal") or compra.get("dataAtualizacao") or ""
-        if antigo and antigo.get("atualizado_pncp") == marca and (antigo.get("situacao") or "") == situacao:
+        if (not self.forcar and antigo and antigo.get("atualizado_pncp") == marca
+                and (antigo.get("situacao") or "") == situacao):
             return
 
         r = rc._get_pncp(f"{rc.PNCP}/api/pncp/v1/orgaos/{cnpj}/compras/{ano}/{seq}/arquivos")
@@ -297,7 +444,7 @@ class Leitor:
             })
         arquivos.sort(key=lambda x: (x["data"] or "", x["seq"] or 0))
 
-        resumo = dict((antigo or {}).get("resumo") or {})
+        resumo = {} if self.forcar else dict((antigo or {}).get("resumo") or {})
         lidos = set(resumo.get("lidos") or [])
         exig = dict(resumo.get("exigencias") or {})
         avisos = list(resumo.get("avisos") or [])
@@ -342,7 +489,7 @@ class Leitor:
             "atualizado_pncp": marca if completo else None,   # incompleto: relê na próxima
             "arquivos": arquivos,
             "resumo": {"lidos": sorted(x for x in lidos if x is not None), "exigencias": exig, "avisos": avisos,
-                       "alertas": alertas_do_edital(arquivos, avisos, situacao)},
+                       "alertas": alertas_do_edital(arquivos, avisos, situacao), "ficha": montar_ficha(exig)},
             "atualizado_em": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         }
         if not rc.sb_gravar(self.radar, "POST", TABELA, params={"on_conflict": "url_id"}, json=linha,
