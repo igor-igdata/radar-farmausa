@@ -8,7 +8,7 @@ on:
 jobs:
   atualizar_banco:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -25,7 +25,7 @@ jobs:
           cache: 'pip'
 
       - name: Instalar bibliotecas necessárias
-        run: pip install requests
+        run: pip install requests pypdf
 
       - name: Rodar o Extrator
         run: python LICITACAO.PY
