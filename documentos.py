@@ -5,7 +5,7 @@ impugnações, decisões, avisos), com o resumo gravado em documentos_edital.
 - A lista de arquivos vem de /api/pncp/v1/orgaos/{cnpj}/compras/{ano}/{seq}/arquivos.
 - Só relê um edital quando o PNCP mudou alguma coisa nele (dataAtualizacaoGlobal).
 - Do edital e do termo de referência tira trechos de validade, prazo de entrega,
-  amostra, registro na ANVISA, exclusividade ME/EPP, ação judicial e sessão.
+  marca, registro na ANVISA, exclusividade ME/EPP, ação judicial, plataforma e sessão.
 - Dos demais documentos (impugnação, decisão, errata, aviso) tira trechos de
   remarcação, suspensão, revogação e do resultado da impugnação: o órgão costuma
   remarcar a sessão no PDF sem mudar a data no cadastro do PNCP.
@@ -62,7 +62,6 @@ TEMAS = {
     "entrega": (r"prazo (maximo )?(de|para) (a )?entrega|prazo de fornecimento"
                 r"|entreg\w* (no prazo (maximo )?de |em |no maximo |dentro de |no prazo de )?(ate )?\d+",
                 NUMERO + r"(dias|horas)", False, r"entrega (das|da) (proposta|propostas|documentacao)"),
-    "amostra": (r"\bamostras?\b", r"exigid|exigencia|apresenta|prazo|dispensad|nao sera", True, None),
     "anvisa": (r"registro (valido )?(na|no|junto a|junto ao|perante a) ?(anvisa|agencia nacional de vigilancia|ministerio da saude)"
                r"|rdc (n\W{0,3})?327|autorizacao sanitaria|autorizacao de funcionamento", None, True, None),
     "me_epp": (r"exclusiv\w* (para |a |as |de |a participacao de )?(me\b|microempresa|empresas de pequeno)"
