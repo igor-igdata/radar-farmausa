@@ -95,3 +95,12 @@ CONTEXTO_SERVICO_EXAME = Trechos([
     "exame", "exames", "laboratorial", "laboratoriais", "analises clinicas",
     "toxicolog", "patologia clinica",
 ])
+
+# Objeto que cita canabidiol mas não compra o produto: análise de teor,
+# pesquisa, estande em feira, software.
+CONTEXTO_NAO_PRODUTO = Trechos([
+    "analises fisico", "analise fisico", "determinacao de teor", "artigos de laboratorio",
+    "projeto de pesquisa", "pesquisa cientifica", "fundacao de apoio",
+    "projeto canabidiol", "estande", "expositor", "feira", "fair", "plataforma digital",
+    "software",
+])

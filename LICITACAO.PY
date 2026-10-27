@@ -19,7 +19,8 @@ Uso: python LICITACAO.PY            execução normal
 import os
 
 import radar_comum
-from termos import Termos, CONTEXTO_EVENTO, CONTEXTO_EXAME, CONTEXTO_SERVICO_EXAME, Trechos
+from termos import (Termos, Trechos, CONTEXTO_EVENTO, CONTEXTO_EXAME, CONTEXTO_SERVICO_EXAME,
+                    CONTEXTO_NAO_PRODUTO)
 
 # ================= CONFIGURAÇÕES =================
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
@@ -68,8 +69,9 @@ RADAR = radar_comum.Radar(
     exclui_item=CONTEXTO_EXAME,
     exclui_objeto=Trechos(CONTEXTO_EVENTO.trechos + CONTEXTO_EXAME.trechos),
     # Inscrição em congresso CBDA, curso, credenciamento de exames laboratoriais
-    # ("Canabinoides" no meio de 800 exames): fora, mesmo com item que cite o termo.
-    veta_objeto=Trechos(CONTEXTO_EVENTO.trechos + CONTEXTO_SERVICO_EXAME.trechos),
+    # ("Canabinoides" no meio de 800 exames), análise de teor, pesquisa, estande:
+    # fora, mesmo com item que cite o termo (salvo se o objeto falar em medicamento).
+    veta_objeto=Trechos(CONTEXTO_EVENTO.trechos + CONTEXTO_SERVICO_EXAME.trechos + CONTEXTO_NAO_PRODUTO.trechos),
     cabecalho_alerta="🌿 <b>{tipo} — CANNABIS MEDICINAL</b>",
     nome_resumo="cannabis",
     emoji="🌿",
