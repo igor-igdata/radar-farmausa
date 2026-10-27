@@ -82,7 +82,7 @@ TEMAS = {
                    r"|bolsa nacional de compras|licitanet|portal de compras publicas|portaldecompraspublicas"
                    r"|compras\.gov\.br|comprasnet|gov\.br/compras|licitacoes-e|licitacoes e do banco do brasil"
                    r"|bec\.sp|bolsa eletronica de compras|compras\.mg|portal de compras do estado|licitar digital"
-                   r"|licitardigital|ammlicita|comprasbr|compras br|bbmnet|bbm net|e-?licita|publinexo"
+                   r"|licitardigital|ammlicita|comprasbr|compras br|bbmnet|bbm net|publinexo"
                    r"|banrisul|compraspublicas|portal ?de ?compras|siga\.|pregao ?online|plataforma (eletronica|digital|de compras)",
                    None, True, None),
     "sessao": (r"sessao publica|abertura da sessao|data da sessao|inicio da (sessao|disputa)|data de abertura"
@@ -334,6 +334,8 @@ class Leitor:
                     avisos.append({"doc": a["seq"], "classe": a["classe"], "titulo": a["titulo"],
                                    "data": a["data"], "trecho": trecho})
 
+        if "presencial" in _sem_acento(compra.get("modalidadeNome") or ""):
+            exig.pop("plataforma", None)   # sessão presencial não tem plataforma de disputa
         linha = {
             "url_id": url_id,
             "situacao": situacao,
