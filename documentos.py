@@ -452,6 +452,13 @@ class Leitor:
                 "url": a.get("url") or a.get("uri"),
             })
         arquivos.sort(key=lambda x: (x["data"] or "", x["seq"] or 0))
+        # Dispensa e inexigibilidade costumam publicar o processo inteiro com nome
+        # genérico ("arquivo.pdf", "AF 5001 2026.pdf"): sem edital nem termo de
+        # referência reconhecível, os documentos sem classe são lidos como principais.
+        if not any(a["classe"] in PRINCIPAIS for a in arquivos):
+            como_principal = {a["seq"] for a in arquivos if a["classe"] == "outro"}
+        else:
+            como_principal = set()
 
         resumo = {} if self.forcar else dict((antigo or {}).get("resumo") or {})
         lidos = set(resumo.get("lidos") or [])
@@ -461,7 +468,8 @@ class Leitor:
         for a in arquivos:
             if a["seq"] in lidos:
                 continue
-            if a["classe"] not in PRINCIPAIS | AVISOS or not a["url"]:
+            principal = a["classe"] in PRINCIPAIS or a["seq"] in como_principal
+            if not (principal or a["classe"] in AVISOS) or not a["url"]:
                 lidos.add(a["seq"])
                 continue
             if self.pdfs >= self.limite:
@@ -482,7 +490,7 @@ class Leitor:
             lidos.add(a["seq"])
             if not texto.strip():
                 continue
-            if a["classe"] in PRINCIPAIS:
+            if principal:
                 for tema, trecho in extrair_temas(texto).items():
                     exig.setdefault(tema, {"trecho": trecho, "doc": a["seq"]})
             else:
