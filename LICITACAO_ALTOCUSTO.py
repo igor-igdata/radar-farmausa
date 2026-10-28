@@ -63,13 +63,14 @@ MEDICAMENTOS = {
     "Epinefrina autoinjetora": ["Epipen", "Epi Pen", "Jext", "Epinefrina Autoinjetora", "Epinefrina Autoinjetor",
                                 "Epinefrina Auto Injetora", "Adrenalina Autoinjetora", "Adrenalina Autoinjetor",
                                 "Adrenalina Auto Injetora",
-                                "Caneta Epinefrina", "Caneta Adrenalina", "Epinefrina Caneta", "Adrenalina Caneta"],
+                                "Caneta Epinefrina", "Caneta Adrenalina", "Epinefrina Caneta", "Adrenalina Caneta",
+                                "Penepin"],
     "Foscarnet": ["Foscavir", "Foscarnet", "Foscarnete"],
     "Ripasudil": ["Glanatec", "Ripasudil"],
     "Interferon gama": ["Imukin", "Actimmune", "Interferon Gama", "Interferona Gama", "Interferon Gamma",
                         "Gamainterferona"],
     "Anakinra": ["Kineret", "Anakinra", "Anacinra"],
-    "Lomoother": ["Lomoother"],
+    "Lomustina": ["Lomoother", "Lomustina", "Lomustine", "Ceenu", "Gleostine"],
     "Diazóxido": ["Proglicem", "Proglycem", "Diazoxido", "Diazoxide"],
     "Sultiame": ["Ospolot", "Sultiame", "Sultiamo", "Sulthiame"],
     # Escopolamina só como adesivo/transdérmica (o butilbrometo é o Buscopan).
@@ -81,7 +82,6 @@ MEDICAMENTOS = {
     "Mexiletina": ["Mexiletina", "Mexiletine", "Mexitil"],
     "Mitotano": ["Mitotano", "Mitotane", "Lysodren"],
     "Midodrina": ["Midodrina", "Midodrine", "Gutron", "Proamatine"],
-    "Penepin": ["Penepin"],
 }
 KEYWORDS = [t for variacoes in MEDICAMENTOS.values() for t in variacoes]
 
