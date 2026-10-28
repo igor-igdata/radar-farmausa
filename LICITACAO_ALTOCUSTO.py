@@ -1,18 +1,18 @@
 """
 RADAR ALTO CUSTO - Monitor de Licitações Farmacêuticas no PNCP (v3)
 ====================================================================
-Busca licitações do Portal Nacional de Contratações Públicas com itens de
-medicamentos de alto custo, grava no Supabase (editais_pncp_altocusto /
+Busca licitações do Portal Nacional de Contratações Públicas com itens dos
+medicamentos da lista abaixo, grava no Supabase (editais_pncp_altocusto /
 itens_pncp_altocusto) e avisa no Telegram. A lógica comum aos radares está em
 radar_comum.py.
 
 v3:
 - só grava edital com ITEM do radar confirmado no PNCP;
 - lê todas as páginas de itens (antes parava no 500º);
-- casa grafia em inglês e variações ("DANTROLENE", "DARATUMUMAB", "TIRZEPATIDA")
-  e só no começo da palavra ("Evr" não casa mais com "Mionevrix");
-- varre os editais abertos com TODOS os termos (antes a busca usava 40 dos 230);
+- casa grafia em inglês, marca e princípio ativo, sempre no começo da palavra;
+- varre os editais abertos com todos os termos, além dos publicados ontem e hoje;
 - revisa datas e itens dos editais abertos e lê os documentos (impugnação, remarcação).
+Lista de medicamentos trocada em 28/10/2026 pela lista do time de licitação.
 
 Uso: python LICITACAO_ALTOCUSTO.py   execução normal
      RADAR_SIMULAR=1 python ...      sem gravar no banco e sem Telegram
@@ -21,7 +21,7 @@ Uso: python LICITACAO_ALTOCUSTO.py   execução normal
 import os
 
 import radar_comum
-from termos import Termos
+from termos import Termos, Trechos
 
 # ================= CONFIGURAÇÕES =================
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
@@ -38,82 +38,67 @@ if not SUPABASE_URL:
 if not SUPABASE_KEY:
     SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNsY2FveXJxaGt4aXJmZWtjeG90Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE4NzUzNTUsImV4cCI6MjA4NzQ1MTM1NX0.vwTN5ACAylYO-FMQ5iEubJ2I-vZ9YMUHG-7pXk2YIOg"
 
-# ================= KEYWORDS ALTO CUSTO =================
-# Termos que confirmam um ITEM (regras de casamento em termos.py: sem acento,
-# começo de palavra, grafia em inglês e plural casam sozinhos).
-KEYWORDS = [
-    "77vf", "Proteina C Composicao Humana", "Proteinas C Composicoes Humanas",
-    "Abilify", "Acalabrutinib", "Acalabrutinibe", "Acamprosate", "Acamprosato",
-    "Acido Quenodesoxicolico", "Adeek", "Adek", "Adenuric", "Alafenamida",
-    "Alectinibe", "Alfapeginterferona", "Alfassebelipase", "Ammonaps", "Amvuttra",
-    "Anacinra", "Anagrelida", "Anakinra", "Aquadeks", "Aquae", "Asenapine",
-    "Atomoxetina", "Atomoxetine", "Atriance", "Axitinibe", "Balsalazide",
-    "Benzatropina", "Benztropine", "Betaciclodextrina", "Betanecol", "Biktarvy",
-    "Braftovi", "Brentuximab", "Brevactid", "Brivaracetam", "Briviact", "Campral",
-    "Camzyos", "Cenobamato",
-    "Cevimelina", "Cevimeline", "Champix", "Charlotte", "Chenodal", "Chenodiol",
-    "Cibinqo", "Cidofovir", "Cisteamina", "Cortef", "Cortrosyn", "Cosintropina",
-    "Cosmegen", "Cosyntropin", "Cystagon", "Cytomel", "Dactinomicina", "Dantrium",
-    "Dantroleno", "Daratumumabe", "Dayvigo", "Dekas", "Diacomit", "Diamox",
-    "Diazoxido", "Dietilpropiona", "Dificlir", "Dissulfiram", "Disulfiram", "Edastar",
-    "Eflornithine", "Eflornitina", "Elixinol", "Elmiron", "Enjaymo", "Epipen",
-    "Escopolamina Adesivo", "Estiripentol", "Ethosuximide", "Etossuximida", "Evr",
-    "Farmausa", "Febuxostat", "Febuxostato", "Felbamate", "Felbamato",
-    "Fenilbutirato Sodio", "Fidaxomicin", "Firdapse", "Flecainide", "Flucitosina",
-    "Fomepizol", "Foscarnet", "Foscavir", "Gamainterferona", "Givinostat",
-    "Glanatec", "Gonadorelin", "Gonadotropina", "Guanfacina", "Guanfacine",
-    "Gutron", "Hemina", "Hepazec", "Hialuronato", "Hidroxocobalamin", "Hioscina",
-    "Hisone", "Hodpro", "Ibrutinib", "Idebenone", "Imbruvica", "Imukin",
-    "Inbrija", "Increlex", "Inotersena", "Inovelon", "Intralipid", "Intuniv",
-    "Isodiolex", "Jaypirca", "Kaliumbromid", "Kayexalate", "Kenalog", "Kimmtrak",
-    "Kineret", "Lecanemab", "Lemborexant", "Leqembi", "Leukine", "Liotironina",
-    "Lokelma", "Lomoother", "Lomustina", "Ludiomil", "Macitentana", "Maprotilina",
-    "Mechlorethamine", "Mecloretamina", "Medrosan", "Megamilbedoce", "Melphalan Mesylate",
-    "Mexiletina", "Mexiletine", "Midodrina", "Midodrine", "Mirvetuximabe",
-    "Misintu", "Mitomycin", "Mitomicina", "Mounjaro", "Nabix", "Nadolol", "Natulan",
-    "Nelarabina", "Nintedanibe", "Nitisinona", "Nivolumabe", "Ocrelizumabe",
-    "Omalizumabe", "Ontozry", "Opdualag", "Ospolot", "Pembrolizumabe", "Penepin",
-    "Penfluridol", "Penridol", "Pentosana", "Perfenazina", "Perphenazine",
-    "Pimozida", "Pimozide", "Pirtobrutinibe", "Pluvicto", "Pomalidomida",
-    "Procarbazina", "Proglicem", "Proglycem", "Purodiol", "Pyrukynd",
-    "Quenodesoxicolico", "Quenodiol", "Quinidina", "Quinidine", "Quvivq",
-    "Rapaflo", "Relyvrio", "Revocon", "Ripasudil", "Rsho", "Rufinamida",
-    "Ruxolitinibe", "Saphris", "Scopoderm", "Sidovis", "Smoflipid",
-    "Soravtansina", "Strattera", "Sulindaco", "Sulthiame", "Sultiame", "Synacthen", "Taloxa",
-    "Tanganil", "Tegsedi", "Tepadina", "Tetrabenazine", "Tetracosactina",
-    "Thiola", "Thiotepa", "Tiotepa", "Tiopronina", "Tirzepatide", "Trabectedina",
-    "Tranilcipromina", "Trastuzumabe Deruxtecana", "Trientina", "Trientine",
-    "Trikafta", "Tryprine", "Tudca", "Vabysmo", "Vaniqa", "Vareniclina",
-    "Varenicline", "Vepesid", "Vimizim", "Vivjoa", "Xagrid", "Xenazine",
-    "Zanubrutinib", "Zonisamida", "Zonisamide", "Ztalmy",
-]
+# ================= MEDICAMENTOS ALTO CUSTO =================
+# Lista do time de licitação (28/10/2026): nome mostrado -> marca, princípio
+# ativo e grafias. Regras de casamento em termos.py (sem acento, começo de
+# palavra, grafia em inglês e plural casam sozinhos). O painel tem a mesma
+# lista em radar-licitacoes-app/lib/radares.php.
+MEDICAMENTOS = {
+    "Guanfacina": ["Guanfacina", "Guanfacine", "Intuniv"],
+    "Fenilbutirato de sódio": ["Ammonaps", "Pheburane", "Buphenyl", "Fenilbutirato Sodio", "Phenylbutyrate"],
+    "Vitaminas ADEK": ["Aquadeks", "Dekas", "Adek", "Adeks"],
+    "Ácido quenodesoxicólico": ["Acido Quenodesoxicolico", "Quenodesoxicolico", "Chenodeoxycholic",
+                                "Chenodiol", "Quenodiol", "Chenodal"],
+    "Brevactid": ["Brevactid"],
+    "Hidrocortisona comprimido": ["Cortef", "Hidrocortisona Comprimido", "Hidrocortisona Comp", "Hidrocortisona Cp"],
+    "Cosintropina": ["Cortrosyn", "Cosintropina", "Cosyntropin", "Tetracosactida", "Tetracosactide",
+                     "Tetracosactina", "Synacthen"],
+    "Cisteamina": ["Cystagon", "Procysbi", "Cisteamina", "Cysteamine", "Mercaptamina"],
+    "Liotironina": ["Cytomel", "Liotironina", "Liothyronine"],
+    "Lemborexante": ["Dayvigo", "Lemborexante", "Lemborexant"],
+    "Elixinol": ["Elixinol"],
+    "Pentosana": ["Elmiron", "Pentosana", "Pentosan"],
+    # Epinefrina só como caneta/autoinjetora: a ampola de adrenalina está em
+    # quase toda lista de hospital e de prefeitura.
+    "Epinefrina autoinjetora": ["Epipen", "Epi Pen", "Jext", "Epinefrina Autoinjetora", "Epinefrina Autoinjetor",
+                                "Epinefrina Auto Injetora", "Adrenalina Autoinjetora", "Adrenalina Autoinjetor",
+                                "Adrenalina Auto Injetora",
+                                "Caneta Epinefrina", "Caneta Adrenalina", "Epinefrina Caneta", "Adrenalina Caneta"],
+    "Foscarnet": ["Foscavir", "Foscarnet", "Foscarnete"],
+    "Ripasudil": ["Glanatec", "Ripasudil"],
+    "Interferon gama": ["Imukin", "Actimmune", "Interferon Gama", "Interferona Gama", "Interferon Gamma",
+                        "Gamainterferona"],
+    "Anakinra": ["Kineret", "Anakinra", "Anacinra"],
+    "Lomoother": ["Lomoother"],
+    "Diazóxido": ["Proglicem", "Proglycem", "Diazoxido", "Diazoxide"],
+    "Sultiame": ["Ospolot", "Sultiame", "Sultiamo", "Sulthiame"],
+    # Escopolamina só como adesivo/transdérmica (o butilbrometo é o Buscopan).
+    "Escopolamina adesivo": ["Scopoderm", "Escopolamina Adesivo", "Escopolamina Transdermica",
+                             "Escopolamina Patch", "Transderm Scop", "Hioscina Adesivo", "Hioscina Transdermica"],
+    "Tiopronina": ["Thiola", "Tiopronina", "Tiopronin"],
+    "Tiotepa": ["Thiotepa", "Tiotepa", "Tepadina"],
+    "Zonisamida": ["Zonisamida", "Zonisamide", "Zonegran"],
+    "Mexiletina": ["Mexiletina", "Mexiletine", "Mexitil"],
+    "Mitotano": ["Mitotano", "Mitotane", "Lysodren"],
+    "Midodrina": ["Midodrina", "Midodrine", "Gutron", "Proamatine"],
+    "Penepin": ["Penepin"],
+}
+KEYWORDS = [t for variacoes in MEDICAMENTOS.values() for t in variacoes]
 
-# Busca dos publicados ontem e hoje (os termos que mais trazem edital).
-KEYWORDS_BUSCA = [
-    "pembrolizumabe", "nivolumabe", "ruxolitinibe", "ocrelizumabe",
-    "daratumumabe", "trastuzumabe deruxtecana", "brentuximab",
-    "ibrutinib", "zanubrutinib", "acalabrutinibe",
-    "tirzepatide", "mounjaro", "omalizumabe",
-    "nintedanibe", "axitinibe", "alectinibe",
-    "trikafta", "vabysmo", "lecanemab",
-    "dactinomicina", "lomustina", "nelarabina",
-    "anakinra", "atomoxetina", "brivaracetam",
-    "etossuximida", "rufinamida", "cenobamato",
-    "dissulfiram", "vareniclina", "liotironina",
-    "midodrina", "dantroleno", "cisteamina",
-    "fomepizol", "cidofovir", "foscarnet",
-    "pluvicto", "mirvetuximabe", "pirtobrutinibe",
-]
+# Confirmam item, mas não entram na busca do PNCP: "hidrocortisona" e
+# "comprimido" juntos trariam qualquer lista de farmácia básica.
+GENERICOS = {"Hidrocortisona Comprimido", "Hidrocortisona Comp", "Hidrocortisona Cp"}
 
-# Termos comuns em lista de farmácia básica e de laboratório: confirmam item de
-# edital achado pelos outros termos, mas não puxam edital sozinhos. Na primeira
-# varredura (27/10/2026) "Hialuronato", "Hioscina" e "Hidroxocobalamina" trouxeram
-# dezenas de listas genéricas, e "Gonadotrofina" trouxe exames de gravidez (beta-hCG).
-GENERICOS = {"Hialuronato", "Hioscina", "Hidroxocobalamin", "Gonadotropina"}
+# Busca dos publicados ontem/hoje e varredura dos abertos: todos os termos,
+# menos os genéricos e as siglas curtas que a busca confundiria com qualquer coisa.
+KEYWORDS_BUSCA = [k for k in KEYWORDS if len(k) > 4 and k not in GENERICOS]
 
-# Varredura dos abertos: todos os termos, menos os genéricos e as siglas curtas
-# que a busca do PNCP confundiria com qualquer coisa.
-KEYWORDS_ABERTOS = [k for k in KEYWORDS if len(k) > 4 and k not in GENERICOS]
+# Item que cita o termo mas não é o produto: Solu-Cortef (hidrocortisona
+# injetável), butilbrometo de escopolamina, teste de laboratório.
+EXCLUI_ITEM = Trechos([
+    "solu cortef", "solucortef", "butilbrometo", "butil brometo", "teste rapido", "testes rapidos",
+    "gravidez", "beta hcg", "imunocromatograf", "reagente", "toxicolog", "drogas de abuso",
+])
 
 RADAR = radar_comum.Radar(
     nome="altocusto",
@@ -122,9 +107,10 @@ RADAR = radar_comum.Radar(
     tabela_itens="itens_pncp_altocusto",
     termos_itens=Termos(KEYWORDS),
     # Sem itens no PNCP, o objeto precisa citar o medicamento (sigla curta não basta).
-    termos_objeto=Termos(KEYWORDS_ABERTOS),
+    termos_objeto=Termos(KEYWORDS_BUSCA),
     termos_busca=KEYWORDS_BUSCA,
-    termos_abertos=KEYWORDS_ABERTOS,
+    termos_abertos=KEYWORDS_BUSCA,
+    exclui_item=EXCLUI_ITEM,
     cabecalho_alerta="💊 <b>{tipo} — ALTO CUSTO</b>",
     nome_resumo="alto custo",
     emoji="💊",

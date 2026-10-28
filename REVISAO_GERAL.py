@@ -11,7 +11,8 @@ REVISÃO GERAL - limpeza do banco dos radares com as regras da v3 (rodar 1x)
 5. Com --incluir-abertos, grava também os editais abertos que estavam fora do
    radar. Nada disso manda Telegram.
 
-Uso: python REVISAO_GERAL.py <pasta_da_copia> cannabis|altocusto [--incluir-abertos]
+Uso: python REVISAO_GERAL.py <pasta_da_copia> cannabis|altocusto [--incluir-abertos] [--so-limpeza]
+     --so-limpeza: faz só os passos 1 a 3 (cópia, itens e editais sem item)
      RADAR_SIMULAR=1 python REVISAO_GERAL.py ...   (só mostra o que faria)
 """
 
@@ -133,6 +134,8 @@ def main():
         log.info(f"   incluídos: {incluidos}")
         extras = [u for u in abertos if u in conhecidos]
 
+    if "--so-limpeza" in sys.argv:   # sem reler datas e documentos dos abertos
+        return
     rc.revisar(radar, rc.editais_para_revisar(radar, extras), com_itens, sem_detalhe,
                alertar=False, ler_documentos=True, limite_pdfs=10**6)
 
