@@ -61,7 +61,7 @@ KEYWORDS = [
     "Farmausa", "Febuxostat", "Febuxostato", "Felbamate", "Felbamato",
     "Fenilbutirato Sodio", "Fidaxomicin", "Firdapse", "Flecainide", "Flucitosina",
     "Fomepizol", "Foscarnet", "Foscavir", "Gamainterferona", "Givinostat",
-    "Glanatec", "Gonadorelin", "Gonadotropina", "Gonadotrofina", "Guanfacina", "Guanfacine",
+    "Glanatec", "Gonadorelin", "Gonadotropina", "Guanfacina", "Guanfacine",
     "Gutron", "Hemina", "Hepazec", "Hialuronato", "Hidroxocobalamin", "Hioscina",
     "Hisone", "Hodpro", "Ibrutinib", "Idebenone", "Imbruvica", "Imukin",
     "Inbrija", "Increlex", "Inotersena", "Inovelon", "Intralipid", "Intuniv",
@@ -105,9 +105,15 @@ KEYWORDS_BUSCA = [
     "pluvicto", "mirvetuximabe", "pirtobrutinibe",
 ]
 
-# Varredura dos abertos: todos os termos, menos siglas curtas que a busca
-# do PNCP confundiria com qualquer coisa.
-KEYWORDS_ABERTOS = [k for k in KEYWORDS if len(k) > 4]
+# Termos comuns em lista de farmácia básica e de laboratório: confirmam item de
+# edital achado pelos outros termos, mas não puxam edital sozinhos. Na primeira
+# varredura (27/10/2026) "Hialuronato", "Hioscina" e "Hidroxocobalamina" trouxeram
+# dezenas de listas genéricas, e "Gonadotrofina" trouxe exames de gravidez (beta-hCG).
+GENERICOS = {"Hialuronato", "Hioscina", "Hidroxocobalamin", "Gonadotropina"}
+
+# Varredura dos abertos: todos os termos, menos os genéricos e as siglas curtas
+# que a busca do PNCP confundiria com qualquer coisa.
+KEYWORDS_ABERTOS = [k for k in KEYWORDS if len(k) > 4 and k not in GENERICOS]
 
 RADAR = radar_comum.Radar(
     nome="altocusto",
