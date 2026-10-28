@@ -24,8 +24,11 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
+      - name: Instalar o Tesseract (OCR de edital digitalizado)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq tesseract-ocr tesseract-ocr-por
+
       - name: Instalar bibliotecas necessárias
-        run: pip install requests pypdf
+        run: pip install requests pypdf pymupdf pytesseract
 
       - name: Rodar o Extrator
         run: python LICITACAO.PY

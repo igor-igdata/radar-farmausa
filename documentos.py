@@ -10,13 +10,17 @@ impugnações, decisões, avisos), com o resumo gravado em documentos_edital.
   remarcação, suspensão, revogação e do resultado da impugnação: o órgão costuma
   remarcar a sessão no PDF sem mudar a data no cadastro do PNCP.
 - Documento novo em edital já lido vira aviso no Telegram.
+- PDF digitalizado (imagem) é lido por OCR, com o Tesseract em português, nas
+  primeiras páginas e com limite por execução (o workflow instala o Tesseract).
 Sem a tabela documentos_edital no banco, ou sem pypdf, a leitura fica desligada.
 """
 
 import datetime
+import html
 import time
 import io
 import logging
+import os
 import re
 import unicodedata
 import zipfile
@@ -27,8 +31,11 @@ log = logging.getLogger("radar")
 
 TABELA = "documentos_edital"
 MAX_PDFS_POR_EXECUCAO = 30
-MAX_MB = 25
+MAX_MB = 40   # "Edital completo e anexos" passa dos 25 MB
 MAX_PAGINAS = 200
+OCR_PAGINAS = 25          # PDF digitalizado: lê só as primeiras páginas (cada uma leva segundos)
+OCR_POR_EXECUCAO = 8      # PDFs por OCR em cada execução do robô
+OCR_DPI = 200
 
 # (classe, padrão no título + tipo do documento). A ordem importa: a decisão
 # sobre uma impugnação é "decisao", não "impugnacao".
@@ -344,16 +351,70 @@ def extrair_avisos(texto):
     return trechos
 
 
-def texto_do_pdf(conteudo):
-    """Texto de um PDF (ou dos PDFs dentro de um ZIP). '' se não há texto."""
+_TESSERACT = []   # cache: [pytesseract] ou [None]
+
+
+def tesseract():
+    """pytesseract pronto para usar, ou None se o OCR não está disponível
+    (no GitHub Actions o workflow instala o tesseract-ocr-por)."""
+    if not _TESSERACT:
+        try:
+            import pymupdf  # noqa: F401  (transforma a página do PDF em imagem)
+            import pytesseract
+            exe = os.environ.get("TESSERACT_CMD") or (
+                r"C:\Program Files\Tesseract-OCR\tesseract.exe" if os.name == "nt" else "")
+            if exe and os.path.exists(exe):
+                pytesseract.pytesseract.tesseract_cmd = exe
+            pytesseract.get_tesseract_version()
+            _TESSERACT.append(pytesseract)
+        except Exception:
+            log.info("📄 Tesseract indisponível: PDF digitalizado fica sem leitura")
+            _TESSERACT.append(None)
+    return _TESSERACT[0]
+
+
+def pouco_texto(texto, paginas):
+    """PDF digitalizado: a extração normal devolve quase nada por página."""
+    return len(texto.strip()) < 80 * max(1, min(paginas, 10))
+
+
+def ocr_pdf(conteudo, paginas=OCR_PAGINAS):
+    """Texto de PDF digitalizado (imagem): cada página vira imagem e o Tesseract lê em português."""
+    import pymupdf
+    from PIL import Image
+    pt = tesseract()
+    partes = []
+    with pymupdf.open(stream=conteudo, filetype="pdf") as doc:
+        for pagina in doc.pages(0, min(paginas, doc.page_count)):
+            pix = pagina.get_pixmap(dpi=OCR_DPI, colorspace=pymupdf.csGRAY)
+            img = Image.frombytes("L", (pix.width, pix.height), pix.samples)
+            partes.append(pt.image_to_string(img, lang="por"))
+    return "\n".join(partes)
+
+
+def texto_do_docx(z):
+    """Texto de um .docx (Word): fica em word/document.xml, parágrafo a parágrafo."""
+    xml = z.read("word/document.xml").decode("utf-8", "ignore")
+    xml = re.sub(r"</w:p>", "\n", xml)
+    xml = re.sub(r"<w:tab/>|<w:br/>", " ", xml)
+    return html.unescape(re.sub(r"<[^>]+>", "", xml))
+
+
+def texto_do_pdf(conteudo, pode_ocr=None, info=None):
+    """Texto de um PDF (ou dos PDFs dentro de um ZIP). '' se não há texto.
+    pode_ocr(): chamada antes de cada OCR, diz se ainda cabe nesta execução.
+    info["adiado"] fica True se o PDF é imagem e o OCR ficou para depois."""
     import pypdf
-    if conteudo[:2] == b"PK":
+    if conteudo[:2] == b"PK":   # ZIP com PDFs, ou o próprio .docx (que também é ZIP)
         partes = []
         try:
             with zipfile.ZipFile(io.BytesIO(conteudo)) as z:
-                for nome in z.namelist()[:10]:
-                    if nome.lower().endswith(".pdf") and z.getinfo(nome).file_size <= MAX_MB * 2**20:
-                        partes.append(texto_do_pdf(z.read(nome)))
+                nomes = z.namelist()
+                if "word/document.xml" in nomes:
+                    return texto_do_docx(z)
+                for nome in nomes[:15]:
+                    if nome.lower().endswith((".pdf", ".docx")) and z.getinfo(nome).file_size <= MAX_MB * 2**20:
+                        partes.append(texto_do_pdf(z.read(nome), pode_ocr, info))
         except zipfile.BadZipFile:
             return ""
         return "\n".join(partes)
@@ -361,17 +422,33 @@ def texto_do_pdf(conteudo):
         return ""
     try:
         leitor = pypdf.PdfReader(io.BytesIO(conteudo))
-        return "\n".join((p.extract_text() or "") for p in leitor.pages[:MAX_PAGINAS])
+        texto = "\n".join((p.extract_text() or "") for p in leitor.pages[:MAX_PAGINAS])
+        paginas = len(leitor.pages)
     except Exception as e:
         log.warning(f"      PDF ilegível: {e.__class__.__name__}")
-        return ""
+        texto, paginas = "", 1
+    if pode_ocr and pouco_texto(texto, paginas) and tesseract():
+        if not pode_ocr():
+            if info is not None:
+                info["adiado"] = True
+            return texto
+        log.info(f"      PDF digitalizado ({paginas} pág.): lendo por OCR")
+        try:
+            lido = ocr_pdf(conteudo)
+        except Exception as e:
+            log.warning(f"      OCR falhou: {e.__class__.__name__}")
+            lido = ""
+        if len(lido.strip()) > len(texto.strip()):
+            texto = lido
+    return texto
 
 
 class Leitor:
-    def __init__(self, radar, limite=MAX_PDFS_POR_EXECUCAO, forcar=False):
+    def __init__(self, radar, limite=MAX_PDFS_POR_EXECUCAO, forcar=False, ocr=OCR_POR_EXECUCAO):
         self.radar = radar
         self.limite = limite
         self.forcar = forcar   # relê tudo do zero (depois de mudar as regras de extração)
+        self.ocr_restantes = ocr
         self.pdfs = 0
         self.linhas = None
         self.ativo = True
@@ -380,6 +457,12 @@ class Leitor:
         except ImportError:
             log.warning("📄 pypdf não instalado: leitura de documentos desligada")
             self.ativo = False
+
+    def _pode_ocr(self):
+        if self.ocr_restantes <= 0:
+            return False
+        self.ocr_restantes -= 1
+        return True
 
     def _carregar(self):
         try:
@@ -486,7 +569,11 @@ class Leitor:
                 completo = False   # fica para a próxima execução
                 continue
             time.sleep(1)
-            texto = texto_do_pdf(conteudo) if conteudo else ""
+            info = {}
+            texto = texto_do_pdf(conteudo, self._pode_ocr, info) if conteudo else ""
+            if info.get("adiado"):
+                completo = False   # PDF digitalizado: o OCR desta execução já esgotou
+                continue
             lidos.add(a["seq"])
             if not texto.strip():
                 continue
