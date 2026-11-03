@@ -201,8 +201,23 @@ def _sb(radar, metodo, tabela, params=None, json=None, prefer="return=minimal", 
         "Prefer": prefer,
         **(extra or {}),
     }
-    return _sessao.request(metodo, f"{radar.supabase_url}/rest/v1/{tabela}",
-                           params=params, json=json, headers=headers, timeout=30)
+    # Só a leitura repete: gravação que caiu no meio pode já ter entrado, e o
+    # sb_gravar trata a falha. A conexão fica parada durante a revisão no PNCP e
+    # o servidor pode encerrá-la; a tentativa seguinte abre outra.
+    tentativas = 4 if metodo == "GET" else 1
+    for tentativa in range(1, tentativas + 1):
+        try:
+            r = _sessao.request(metodo, f"{radar.supabase_url}/rest/v1/{tabela}",
+                                params=params, json=json, headers=headers, timeout=30)
+            if r.status_code < 500 or tentativa == tentativas:
+                return r
+            motivo = f"respondeu {r.status_code}"
+        except requests.exceptions.RequestException as e:
+            if tentativa == tentativas:
+                raise
+            motivo = f"derrubou a conexão ({e.__class__.__name__})"
+        log.warning(f"Supabase {motivo} em {tabela} (tentativa {tentativa}/{tentativas})")
+        time.sleep(5 * tentativa)
 
 
 def sb_ler(radar, tabela, select, ordem, filtros=None):
@@ -808,8 +823,7 @@ def revisar(radar, editais, com_itens, sem_detalhe=(), alertar=True, ler_documen
 
 # ================= RESUMO DIÁRIO =================
 
-def enviar_resumo_dia(radar):
-    hoje = agora_brasilia().date()
+def enviar_resumo_dia(radar, hoje):
     editais = sb_ler(radar, radar.tabela_editais, "url_id,orgao,uf,modalidade,valor_total_estimado,titulo",
                      "valor_total_estimado.desc.nullslast",
                      {"data_publicacao": f"gte.{hoje.isoformat()}T00:00:00"})
@@ -955,7 +969,8 @@ def main(radar):
     log.info("=" * 60)
 
     if agora.hour >= 18:  # 18h de Brasília em diante
-        enviar_resumo_dia(radar)
+        # o dia em que a execução começou: ela pode terminar depois da meia-noite
+        enviar_resumo_dia(radar, agora.date())
 
 
 def registrar_execucao(radar, inicio, status, erro=None):
