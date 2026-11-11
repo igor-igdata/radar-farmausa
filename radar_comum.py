@@ -597,7 +597,9 @@ def alerta_novo(radar, edital, escolhidos, compra=None):
         log.info(f"🚀 Telegram enviado: {edital.get('orgao', '')[:60]}")
 
 
-def publicado_recente(edital, dias=2):
+def publicado_recente(edital, dias=4):
+    # 4 dias: sem execução no fim de semana, o publicado na sexta à noite (ou antes de um
+    # feriado) só é visto na segunda e ainda merece alerta próprio
     pub = (edital.get("data_publicacao") or "")[:10]
     return not pub or pub >= (agora_brasilia().date() - datetime.timedelta(days=dias)).isoformat()
 
@@ -968,7 +970,9 @@ def main(radar):
     log.info(f"   Novos (Telegram):  {total_novas}")
     log.info("=" * 60)
 
-    if agora.hour >= 18:  # 18h de Brasília em diante
+    # a rodada que começa entre 17h e 18h (a trava do horario.py não deixa rodar depois)
+    # é a última do dia e manda o resumo antes do fim do expediente
+    if agora.hour >= 17:
         # o dia em que a execução começou: ela pode terminar depois da meia-noite
         enviar_resumo_dia(radar, agora.date())
 

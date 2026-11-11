@@ -1,13 +1,46 @@
 name: Radar Alto Custo
 
 on:
+  # O agendamento do GitHub atrasa horas e pula execuções (com 6 horários por dia, rodava
+  # 2 vezes, à tarde e à noite). Por isso tenta a cada 15 minutos, em minutos quebrados
+  # (menos congestionados), das 7h às 17h52 de Brasília em dia útil; o job "horario"
+  # (horario.py) deixa rodar no máximo uma vez a cada 50 minutos e só no horário comercial.
   schedule:
-    # Roda 6x por dia (horário UTC) = 8:30, 10:30, 12:30, 14:30, 16:30, 18:30 Brasília
-    - cron: '30 11,13,15,17,19,21 * * *'
-  workflow_dispatch:  # permite rodar manualmente
+    - cron: '7,22,37,52 10-20 * * 1-5'  # UTC; Brasília = UTC-3
+  workflow_dispatch:  # disparo manual pelo GitHub Actions (roda sempre)
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
 
 jobs:
+  horario:
+    # tentativa agendada: roda ou não conforme o horario.py; disparo manual roda sempre
+    runs-on: ubuntu-latest
+    outputs:
+      rodar: ${{ steps.conferir.outputs.rodar }}
+    steps:
+      - name: Puxar os arquivos do repositório
+        if: github.event_name == 'schedule'
+        uses: actions/checkout@v4
+
+      - name: Conferir o horário e a última execução
+        id: conferir
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENTO: ${{ github.event_name }}
+        run: |
+          if [ "$EVENTO" != "schedule" ]; then echo "rodar=sim" >> "$GITHUB_OUTPUT"; exit 0; fi
+          gh run list -R "$GITHUB_REPOSITORY" -w radar-altocusto.yml -L 30 --json databaseId,status,createdAt,startedAt,updatedAt > execucoes.json
+          python3 horario.py execucoes.json
+
   radar_altocusto:
+    needs: horario
+    if: needs.horario.outputs.rodar == 'sim'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
