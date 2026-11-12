@@ -1,12 +1,12 @@
 """
-Trava das execuções agendadas dos radares (job "horario" dos workflows).
+Trava das execuções agendadas pelo GitHub (job "horario" dos workflows).
 
-O agendamento do GitHub atrasa horas e pula execuções: com 6 horários por dia,
-rodava 2 vezes, à tarde e à noite. Por isso os workflows tentam a cada 15
-minutos e esta trava decide se a tentativa roda de verdade: só em dia útil,
-das 7h às 18h de Brasília, e com pelo menos 50 minutos desde a última execução
-de verdade. Assim sai mais ou menos uma rodada por hora, com 9h e 12h incluídas.
-Disparo manual pelo GitHub roda sempre (o workflow nem chama a trava).
+Quem dispara os robôs no horário é o Supabase (sql/disparo_robos.sql), de hora em
+hora das 8h às 17h de Brasília em dia útil, por workflow_dispatch. O agendamento do
+GitHub atrasa horas (em 12/11/2026 a primeira execução do dia foi às 15h07) e fica
+só de reserva: a tentativa roda se for dia útil, das 8h às 18h, e se não houve
+execução de verdade nos últimos 70 minutos, isto é, se o Supabase perdeu uma hora.
+Disparo pelo Supabase ou manual roda sempre (o workflow nem chama a trava).
 
 Uso: python horario.py <execucoes.json>
      (o arquivo é a saída de gh run list --json databaseId,status,createdAt,startedAt,updatedAt)
@@ -19,8 +19,8 @@ import sys
 from zoneinfo import ZoneInfo
 
 BRASILIA = ZoneInfo("America/Sao_Paulo")
-INICIO, FIM = 7, 18           # horário comercial: das 7h até antes das 18h
-INTERVALO_MIN = 50            # minutos entre duas execuções de verdade
+INICIO, FIM = 8, 18           # horário comercial: das 8h até antes das 18h
+INTERVALO_MIN = 70            # o Supabase dispara a cada 60 min; reserva só se ele falhar
 SO_PASSOU_SEG = 120           # tentativa barrada aqui termina em segundos
 
 

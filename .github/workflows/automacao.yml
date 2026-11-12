@@ -1,12 +1,12 @@
 name: Robô Extrator PNCP FarmaUSA
 on:
-  # O agendamento do GitHub atrasa horas e pula execuções (com 6 horários por dia, rodava
-  # 2 vezes, à tarde e à noite). Por isso tenta a cada 15 minutos, em minutos quebrados
-  # (menos congestionados), das 7h às 17h52 de Brasília em dia útil; o job "horario"
-  # (horario.py) deixa rodar no máximo uma vez a cada 50 minutos e só no horário comercial.
+  # Quem dispara no horário é o Supabase (sql/disparo_robos.sql): de hora em hora, das 8h
+  # às 17h de Brasília, em dia útil, por workflow_dispatch. O agendamento do GitHub atrasa
+  # horas e fica só de reserva: o job "horario" (horario.py) só deixa rodar das 8h às 18h
+  # e se não houve execução nos últimos 70 minutos.
   schedule:
-    - cron: '7,22,37,52 10-20 * * 1-5'  # UTC; Brasília = UTC-3
-  workflow_dispatch: # disparo manual pelo GitHub Actions (roda sempre)
+    - cron: '17,47 11-20 * * 1-5'  # UTC; Brasília = UTC-3
+  workflow_dispatch: # Supabase e disparo manual (rodam sempre)
 
 permissions:
   actions: read
@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   horario:
-    # tentativa agendada: roda ou não conforme o horario.py; disparo manual roda sempre
+    # tentativa agendada: roda ou não conforme o horario.py; Supabase e manual rodam sempre
     runs-on: ubuntu-latest
     outputs:
       rodar: ${{ steps.conferir.outputs.rodar }}
