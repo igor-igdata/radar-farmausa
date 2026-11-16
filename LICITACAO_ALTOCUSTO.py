@@ -94,10 +94,12 @@ GENERICOS = {"Hidrocortisona Comprimido", "Hidrocortisona Comp", "Hidrocortisona
 KEYWORDS_BUSCA = [k for k in KEYWORDS if len(k) > 4 and k not in GENERICOS]
 
 # Item que cita o termo mas não é o produto: Solu-Cortef (hidrocortisona
-# injetável), butilbrometo de escopolamina, teste de laboratório.
+# injetável), butilbrometo de escopolamina, teste de laboratório, cosmético
+# (clareador facial de cisteamina; o gel/colírio oftálmico continua).
 EXCLUI_ITEM = Trechos([
     "solu cortef", "solucortef", "butilbrometo", "butil brometo", "teste rapido", "testes rapidos",
     "gravidez", "beta hcg", "imunocromatograf", "reagente", "toxicolog", "drogas de abuso",
+    "clareador", "clareamento", "melasma", "despigment", "dermocosmet", "niacinamida",
 ])
 
 RADAR = radar_comum.Radar(
