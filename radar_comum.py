@@ -218,8 +218,11 @@ def _painel(radar, metodo, tabela, params=None, json=None, prefer="return=minima
         "X-Radar-Chave": radar.supabase_key,
         "Content-Type": "text/plain",
         "User-Agent": PNCP_HEADERS["User-Agent"],
+        "Connection": "close",
     }
-    r = _sessao.post(radar.supabase_url, data=corpo, headers=headers, timeout=60)
+    # conexão nova a cada pedido: a hospedagem fecha a conexão parada durante a revisão no
+    # PNCP, e a gravação seguinte na conexão reaproveitada caía (RemoteDisconnected, 16/11/2026)
+    r = requests.post(radar.supabase_url, data=corpo, headers=headers, timeout=60)
     if r.status_code != 200:
         return _RespostaPainel(r.status_code, {"message": r.text[:200]})
     try:
