@@ -1,12 +1,13 @@
 name: Radar Alto Custo
 
 on:
-  # Quem dispara no horário é o Supabase (sql/disparo_robos.sql): de hora em hora, das 8h
-  # às 17h de Brasília, em dia útil, por workflow_dispatch. O agendamento do GitHub atrasa
-  # horas e fica só de reserva: o job "horario" (horario.py) só deixa rodar das 8h às 18h
-  # e se não houve execução nos últimos 70 minutos.
+  # Quem dispara no horário é o cron do cPanel do farmausa.com (desde 16/11/2026; antes, o
+  # Supabase): de hora em hora, das 8h às 18h de Brasília, em dia útil, por workflow_dispatch.
+  # A rodada das 18h manda o resumo do dia. O agendamento do GitHub atrasa horas e fica só de
+  # reserva: o job "horario" (horario.py) só deixa rodar das 8h às 19h e se não houve
+  # execução nos últimos 70 minutos.
   schedule:
-    - cron: '17,47 11-20 * * 1-5'  # UTC; Brasília = UTC-3
+    - cron: '17,47 11-21 * * 1-5'  # UTC; Brasília = UTC-3
   workflow_dispatch:  # Supabase e disparo manual (rodam sempre)
 
 permissions:

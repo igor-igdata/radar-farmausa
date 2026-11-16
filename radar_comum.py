@@ -1010,9 +1010,9 @@ def main(radar):
     log.info(f"   Novos (Telegram):  {total_novas}")
     log.info("=" * 60)
 
-    # a rodada que começa entre 17h e 18h (a trava do horario.py não deixa rodar depois)
-    # é a última do dia e manda o resumo antes do fim do expediente
-    if agora.hour >= 17:
+    # a rodada que começa às 18h (a trava do horario.py não deixa rodar depois das 19h)
+    # é a última do dia e manda o resumo no fim do expediente (pedido de 16/11/2026)
+    if agora.hour >= 18:
         # o dia em que a execução começou: ela pode terminar depois da meia-noite
         enviar_resumo_dia(radar, agora.date())
 
