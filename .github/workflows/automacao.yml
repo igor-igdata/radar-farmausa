@@ -45,8 +45,8 @@ jobs:
     env:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      SUPABASE_URL: ${{ secrets.RADAR_BANCO_URL || secrets.SUPABASE_URL }}  # banco do painel (MySQL) quando o segredo existir
+      SUPABASE_KEY: ${{ secrets.RADAR_BANCO_CHAVE || secrets.SUPABASE_KEY }}
     steps:
       - name: Puxar os arquivos do repositório
         uses: actions/checkout@v4

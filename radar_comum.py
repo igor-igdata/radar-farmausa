@@ -19,7 +19,10 @@ O que cada execução faz:
 RADAR_SIMULAR=1 roda tudo sem gravar no banco e sem mandar Telegram.
 """
 
+import base64
 import datetime
+import gzip
+import json as jsonlib
 import logging
 import os
 import time
@@ -191,9 +194,43 @@ def classificar_modalidade(modalidade_nome):
     return "📋 Licitação"
 
 
-# ================= SUPABASE =================
+# ================= BANCO =================
+# Desde nov/2026 o banco é o MySQL do painel (farmausa.com/radar-licitacoes/robo). SUPABASE_URL e
+# SUPABASE_KEY continuam com esses nomes nos segredos do GitHub: se o endereço não for do
+# supabase.co, o pedido vai embalado ao painel (JSON em gzip + base64), porque o firewall da
+# hospedagem bloqueia o IP de quem manda consulta com cara de SQL. O painel responde no mesmo
+# formato do Supabase, então sb_ler e sb_gravar não mudam.
+
+class _RespostaPainel:
+    def __init__(self, status, dados):
+        self.status_code = status
+        self._dados = dados
+        self.text = "" if dados is None else jsonlib.dumps(dados, ensure_ascii=False)
+
+    def json(self):
+        return self._dados
+
+
+def _painel(radar, metodo, tabela, params=None, json=None, prefer="return=minimal"):
+    pedido = {"t": tabela, "m": metodo, "p": params or {}, "j": json, "pr": prefer or ""}
+    corpo = base64.b64encode(gzip.compress(jsonlib.dumps(pedido, ensure_ascii=False).encode("utf-8")))
+    headers = {
+        "X-Radar-Chave": radar.supabase_key,
+        "Content-Type": "text/plain",
+        "User-Agent": PNCP_HEADERS["User-Agent"],
+    }
+    r = _sessao.post(radar.supabase_url, data=corpo, headers=headers, timeout=60)
+    if r.status_code != 200:
+        return _RespostaPainel(r.status_code, {"message": r.text[:200]})
+    try:
+        resp = jsonlib.loads(gzip.decompress(base64.b64decode(r.content.strip())).decode("utf-8"))
+    except Exception:
+        return _RespostaPainel(502, {"message": "resposta ilegível do painel: " + r.text[:120]})
+    return _RespostaPainel(int(resp.get("s", 502)), resp.get("d"))
+
 
 def _sb(radar, metodo, tabela, params=None, json=None, prefer="return=minimal", extra=None):
+    no_painel = "supabase.co" not in (radar.supabase_url or "")
     headers = {
         "apikey": radar.supabase_key,
         "Authorization": f"Bearer {radar.supabase_key}",
@@ -207,8 +244,11 @@ def _sb(radar, metodo, tabela, params=None, json=None, prefer="return=minimal", 
     tentativas = 4 if metodo == "GET" else 1
     for tentativa in range(1, tentativas + 1):
         try:
-            r = _sessao.request(metodo, f"{radar.supabase_url}/rest/v1/{tabela}",
-                                params=params, json=json, headers=headers, timeout=30)
+            if no_painel:
+                r = _painel(radar, metodo, tabela, params=params, json=json, prefer=prefer)
+            else:
+                r = _sessao.request(metodo, f"{radar.supabase_url}/rest/v1/{tabela}",
+                                    params=params, json=json, headers=headers, timeout=30)
             if r.status_code < 500 or tentativa == tentativas:
                 return r
             motivo = f"respondeu {r.status_code}"
