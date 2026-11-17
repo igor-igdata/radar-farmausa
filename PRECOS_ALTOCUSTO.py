@@ -38,6 +38,8 @@ DIAS = 365
 TABELA = "precos_altocusto"
 TABELA_COMPRAS = "precos_compras"
 PAUSA = 0.8   # segundos entre consultas de itens/resultados
+PAUSA_BUSCA = 3.0   # entre páginas e consultas da busca (é ela que recusa quem consulta demais)
+ESPERAS_REPETICAO = (90, 240)   # segundos antes da 2ª e da 3ª passada dos medicamentos cuja busca falhou
 
 
 # ---------------------------------------------------------------- apresentação
@@ -113,8 +115,8 @@ def compras_do_medicamento(termos, desde):
             # a busca ordena pela atualização: página que já passou da data não tem mais nada do período
             if len(itens) < 100 or (itens[-1].get("data_atualizacao_pncp") or "")[:10] < desde:
                 break
-            time.sleep(rc.PAUSA_ENTRE_BUSCAS)
-        time.sleep(rc.PAUSA_ENTRE_BUSCAS)
+            time.sleep(PAUSA_BUSCA)
+        time.sleep(PAUSA_BUSCA)
     return achadas, falhou
 
 
@@ -195,13 +197,28 @@ def main():
     log.info(f"💰 Preços do alto custo desde {desde}: {len(grupos)} medicamento(s)")
 
     feitas = {l["url_id"]: l for l in (rc.sb_ler(radar, TABELA_COMPRAS, "url_id,data_atualizacao", "url_id") or [])}
-    compras, buscas_falhas = {}, 0
-    for g, termos in grupos.items():
-        achadas, falhou = compras_do_medicamento(termos.termos, desde)
-        buscas_falhas += falhou
-        for u, c in achadas.items():
-            compras.setdefault(u, {**c, "grupos": set()})["grupos"].add(g)
-        log.info(f"   {g}: {len(achadas)} compra(s){' (busca incompleta)' if falhou else ''}")
+    compras = {}
+    pendentes = list(grupos)
+    # a busca do PNCP recusa conexão quando há consulta demais: o medicamento que falhar volta para a
+    # fila e é buscado de novo depois de uma espera (2ª e 3ª passada)
+    for passada, espera in enumerate((0,) + ESPERAS_REPETICAO, 1):
+        if not pendentes:
+            break
+        if espera:
+            log.info(f"🔁 {passada}ª passada: {len(pendentes)} medicamento(s) com busca incompleta, aguardando {espera}s")
+            time.sleep(espera)
+        falharam = []
+        for g in pendentes:
+            achadas, falhou = compras_do_medicamento(grupos[g].termos, desde)
+            if falhou:
+                falharam.append(g)
+            for u, c in achadas.items():
+                compras.setdefault(u, {**c, "grupos": set()})["grupos"].add(g)
+            log.info(f"   {g}: {len(achadas)} compra(s){' (busca incompleta)' if falhou else ''}")
+        pendentes = falharam
+    buscas_falhas = len(pendentes)
+    if pendentes:
+        log.warning(f"⚠️ Busca incompleta depois de 3 passadas: {', '.join(pendentes)} (ficam para a próxima noite)")
 
     def mudou(c):
         f = feitas.get(c["url_id"])
