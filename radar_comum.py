@@ -70,7 +70,7 @@ class Radar:
     def __init__(self, *, nome, titulo, tabela_editais, tabela_itens, termos_itens,
                  termos_objeto, termos_busca, termos_abertos, cabecalho_alerta,
                  nome_resumo, emoji, supabase_url, supabase_key, telegram_token,
-                 chat_id, exclui_item=None, exclui_objeto=CONTEXTO_EVENTO, veta_objeto=None):
+                 chat_id, exclui_item=None, exclui_objeto=CONTEXTO_EVENTO, veta_objeto=None, veta_novos=None):
         self.nome = nome
         self.titulo = titulo
         self.tabela_editais = tabela_editais
@@ -89,6 +89,8 @@ class Radar:
         self.exclui_item = exclui_item
         self.exclui_objeto = exclui_objeto   # objeto que não basta sozinho (sem item do radar)
         self.veta_objeto = veta_objeto       # objeto que descarta o edital mesmo com item do radar
+        # objeto que não entra como edital NOVO; o que já está no banco fica (a revisão não apaga)
+        self.veta_novos = veta_novos
         # unidade/benefício nos itens e plataforma no edital: só depois de rodar
         # sql/radar_v3.sql no Supabase (main() confere).
         self.colunas_novas = False
@@ -101,6 +103,10 @@ class Radar:
     def objeto_vetado(self, objeto):
         return bool(self.veta_objeto and self.veta_objeto.casa(objeto)
                     and not CONTEXTO_MEDICAMENTO.casa(objeto))
+
+    def objeto_vetado_novo(self, objeto):
+        return self.objeto_vetado(objeto) or bool(self.veta_novos and self.veta_novos.casa(objeto)
+                                                  and not CONTEXTO_MEDICAMENTO.casa(objeto))
 
     def objeto_do_radar(self, objeto):
         if not self.termos_objeto.casa(objeto):
@@ -742,7 +748,7 @@ def processar_novo(radar, c, atrasados=None):
     único no fim) em vez de ganhar um alerta só dele."""
     objeto = c.get("objeto") or ""
     log.info(f"   🎯 {c['uf']} | {c['orgao'][:40]} | {objeto[:70]}")
-    if BLOQUEIO_OBJETO.casa(objeto) or radar.objeto_vetado(objeto):
+    if BLOQUEIO_OBJETO.casa(objeto) or radar.objeto_vetado_novo(objeto):
         log.info("   🚫 Objeto bloqueado (evento, exame de laboratório ou outro contexto não farmacêutico)")
         return False
 

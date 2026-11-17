@@ -21,7 +21,7 @@ Uso: python LICITACAO_ALTOCUSTO.py   execução normal
 import os
 
 import radar_comum
-from termos import Termos, Trechos
+from termos import Termos, Trechos, CONTEXTO_SERVICO_EXAME
 
 # ================= CONFIGURAÇÕES =================
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
@@ -140,6 +140,9 @@ RADAR = radar_comum.Radar(
     termos_busca=KEYWORDS_BUSCA,
     termos_abertos=KEYWORDS_BUSCA,
     exclui_item=EXCLUI_ITEM,
+    # credenciamento de exames de laboratório (CISSUL: "INTERFERON GAMMA" a R$ 127,67 por exame) não
+    # entra como edital novo; o painel esconde os que já estão no banco (altocusto_objeto_vetado)
+    veta_novos=CONTEXTO_SERVICO_EXAME,
     cabecalho_alerta="💊 <b>{tipo} — ALTO CUSTO</b>",
     nome_resumo="alto custo",
     emoji="💊",
