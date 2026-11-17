@@ -45,6 +45,10 @@ SIMULAR = os.environ.get("RADAR_SIMULAR") == "1"
 
 PAUSA_ENTRE_BUSCAS = 1.5     # segundos entre consultas à busca (ela bloqueia quem consulta demais)
 ESPERA_SEGUNDA_PASSADA = 30  # segundos antes de repetir as consultas que falharam
+ESPERA_TERCEIRA_PASSADA = 90  # e antes da última tentativa das que falharam de novo
+# A busca do PNCP derruba a conexão ao acaso (cerca de metade das consultas em 17/11/2026, em menos
+# de 1 s, com conexão nova ou reaproveitada): vale insistir mais vezes com pausas curtas.
+TENTATIVAS_BUSCA = 6
 TERMOS_POR_BUSCA = 15        # termos juntados com OR numa consulta só
 ITENS_POR_PAGINA = 500       # máximo que a API de itens entrega por página
 DIAS_SEM_DATA = 30           # edital sem data de encerramento é revisado por 30 dias
@@ -296,10 +300,9 @@ def sb_gravar(radar, metodo, tabela, params=None, json=None, descricao="", prefe
 
 # ================= API PNCP =================
 
-def _get_pncp(url, params=None, tentativas=4):
+def _get_pncp(url, params=None, tentativas=4, espera=2):
     """GET no PNCP com nova tentativa quando a API derruba a conexão, responde
     429/5xx ou 200 vazio. Devolve None se não houve resposta útil."""
-    espera = 2
     for tentativa in range(1, tentativas + 1):
         pausa = espera
         try:
@@ -415,7 +418,7 @@ def _pagina_busca(q, pagina, status=None):
               "pagina": pagina, "tam_pagina": 100}
     if status:
         params["status"] = status
-    r = _get_pncp(f"{PNCP}/api/search/", params)
+    r = _get_pncp(f"{PNCP}/api/search/", params, tentativas=TENTATIVAS_BUSCA, espera=1)
     if r is None or r.status_code != 200:
         return None
     j = _json(r)
@@ -438,11 +441,21 @@ def _rodar_consultas(consultas, coletar):
         if not coletar(q):
             restantes.append(q)
         time.sleep(PAUSA_ENTRE_BUSCAS)
+    if restantes:
+        log.info(f"🔁 Terceira passada: {len(restantes)} consulta(s) ainda sem resposta, aguardando {ESPERA_TERCEIRA_PASSADA}s")
+        time.sleep(ESPERA_TERCEIRA_PASSADA)
+        ultimas, restantes = restantes, []
+        for q in ultimas:
+            if not coletar(q):
+                restantes.append(q)
+            time.sleep(PAUSA_ENTRE_BUSCAS * 2)
     RESUMO_EXEC["buscas_com_erro"] += len(restantes)
     if restantes:
-        log.warning(f"   ⚠️ Ainda sem resposta após a segunda passada: {len(restantes)} consulta(s)")
+        log.warning(f"   ⚠️ Sem resposta após a terceira passada: {len(restantes)} consulta(s)")
+        for q in restantes:
+            log.warning(f"      · {q[:100]}")
     else:
-        log.info(f"   ✅ Segunda passada recuperou as {len(falhas)} consulta(s)")
+        log.info(f"   ✅ As passadas extras recuperaram as {len(falhas)} consulta(s)")
 
 
 def candidato_da_busca(item):
