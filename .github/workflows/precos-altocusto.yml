@@ -1,0 +1,48 @@
+name: Preços Alto Custo
+
+on:
+  # Preços pagos nos últimos 12 meses (PRECOS_ALTOCUSTO.py), de madrugada: longe das rodadas do
+  # horário comercial, porque a API do PNCP recusa quem consulta demais. O horário exato não importa
+  # (o agendamento do GitHub atrasa); cada noite só refaz as compras que mudaram no PNCP.
+  schedule:
+    - cron: '20 3 * * *'   # 00h20 de Brasília
+  workflow_dispatch:
+    inputs:
+      max_compras:
+        description: 'Máximo de compras nesta execução'
+        required: false
+        default: '900'
+      so:
+        description: 'Só este medicamento (nome da lista, ex.: Cisteamina); vazio = todos'
+        required: false
+        default: ''
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  precos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependências
+        run: pip install requests
+
+      - name: Coletar preços do alto custo
+        env:
+          SUPABASE_URL: ${{ secrets.RADAR_BANCO_URL }}   # só existe no banco do painel (MySQL)
+          SUPABASE_KEY: ${{ secrets.RADAR_BANCO_CHAVE }}
+          MAX_COMPRAS: ${{ github.event.inputs.max_compras || '900' }}
+          SO: ${{ github.event.inputs.so || '' }}
+        run: |
+          if [ -n "$SO" ]; then
+            python PRECOS_ALTOCUSTO.py --max-compras "$MAX_COMPRAS" --so "$SO"
+          else
+            python PRECOS_ALTOCUSTO.py --max-compras "$MAX_COMPRAS"
+          fi
