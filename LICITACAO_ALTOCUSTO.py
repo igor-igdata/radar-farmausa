@@ -95,12 +95,39 @@ KEYWORDS_BUSCA = [k for k in KEYWORDS if len(k) > 4 and k not in GENERICOS]
 
 # Item que cita o termo mas não é o produto: Solu-Cortef (hidrocortisona
 # injetável), butilbrometo de escopolamina, teste de laboratório, cosmético
-# (clareador facial de cisteamina; o gel/colírio oftálmico continua).
-EXCLUI_ITEM = Trechos([
+# (clareador facial de cisteamina).
+TRECHOS_EXCLUIDOS = [
     "solu cortef", "solucortef", "butilbrometo", "butil brometo", "teste rapido", "testes rapidos",
     "gravidez", "beta hcg", "imunocromatograf", "reagente", "toxicolog", "drogas de abuso",
     "clareador", "clareamento", "melasma", "despigment", "dermocosmet", "niacinamida",
-])
+]
+
+# Medicamento da lista numa forma que não interessa (pedidos de 17/11/2026):
+# cisteamina em colírio ou gel oftálmico, e interferon gama como exame de
+# tuberculose (IGRA, QuantiFERON), não o medicamento (Imukin). A regra é por
+# medicamento porque o Ripasudil só existe como colírio. O painel tem a mesma
+# regra em altocusto_formas_excluidas() (radar-licitacoes-app/lib/radares.php).
+FORMAS_EXCLUIDAS = {
+    "Cisteamina": ["colir", "oftalm", "oft", "ocular", "cystadrop"],
+    "Interferon gama": ["quantiferon", "igra", "iltb", "release", "liberacao", "tb gold", "tuberculos",
+                        "exame", "teste", "ensaio", "kit", "sorolog", "diagnost", "laborat"],
+}
+
+
+class ExcluiItem:
+    """Trechos que tiram o item e medicamento citado numa forma excluída."""
+
+    def __init__(self, trechos, formas):
+        self.trechos = Trechos(trechos)
+        self.formas = [(Termos(MEDICAMENTOS[m]), Trechos(f)) for m, f in formas.items()]
+
+    def casa(self, texto):
+        if self.trechos.casa(texto):
+            return True
+        return any(med.casa(texto) and forma.casa(texto) for med, forma in self.formas)
+
+
+EXCLUI_ITEM = ExcluiItem(TRECHOS_EXCLUIDOS, FORMAS_EXCLUIDAS)
 
 RADAR = radar_comum.Radar(
     nome="altocusto",
