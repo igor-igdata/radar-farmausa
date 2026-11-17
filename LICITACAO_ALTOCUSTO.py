@@ -64,7 +64,7 @@ MEDICAMENTOS = {
                                 "Epinefrina Auto Injetora", "Adrenalina Autoinjetora", "Adrenalina Autoinjetor",
                                 "Adrenalina Auto Injetora",
                                 "Caneta Epinefrina", "Caneta Adrenalina", "Epinefrina Caneta", "Adrenalina Caneta",
-                                "Penepin"],
+                                "Penepin", "Pinepin"],
     "Foscarnet": ["Foscavir", "Foscarnet", "Foscarnete"],
     "Ripasudil": ["Glanatec", "Ripasudil"],
     "Interferon gama": ["Imukin", "Actimmune", "Interferon Gama", "Interferona Gama", "Interferon Gamma",
