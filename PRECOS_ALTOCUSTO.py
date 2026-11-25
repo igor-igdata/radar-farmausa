@@ -31,7 +31,7 @@ import unicodedata
 
 import radar_comum as rc
 import LICITACAO_ALTOCUSTO as AC
-from termos import Termos, normalizar
+from termos import normalizar
 
 log = logging.getLogger("radar")
 DIAS = 365
@@ -193,7 +193,7 @@ def main():
         sys.exit("SUPABASE_URL ainda aponta para o Supabase: o histórico de preços só existe no banco do painel")
     inicio = time.time()
     desde = (rc.agora_brasilia() - datetime.timedelta(days=DIAS)).date().isoformat()
-    grupos = {g: Termos(v) for g, v in AC.MEDICAMENTOS.items() if not so or g == so}
+    grupos = {g: AC.termos_do_grupo(g) for g in AC.MEDICAMENTOS if not so or g == so}
     log.info(f"💰 Preços do alto custo desde {desde}: {len(grupos)} medicamento(s)")
 
     feitas = {l["url_id"]: l for l in (rc.sb_ler(radar, TABELA_COMPRAS, "url_id,data_atualizacao", "url_id") or [])}

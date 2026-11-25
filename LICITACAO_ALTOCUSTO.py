@@ -82,8 +82,35 @@ MEDICAMENTOS = {
     "Mexiletina": ["Mexiletina", "Mexiletine", "Mexitil"],
     "Mitotano": ["Mitotano", "Mitotane", "Lysodren"],
     "Midodrina": ["Midodrina", "Midodrine", "Gutron", "Proamatine"],
+    # de volta em 25/11/2026 (tinha saído com a troca de lista de 28/10)
+    "Estiripentol": ["Diacomit", "Estiripentol", "Stiripentol"],
 }
 KEYWORDS = [t for variacoes in MEDICAMENTOS.values() for t in variacoes]
+
+# Princípio e forma em qualquer ponto do texto (os termos aceitam até 3 palavras
+# entre as partes). O catálogo federal chama o Scopoderm de "Escopolamina
+# Butilbrometo concentração: 1,5, tipo forma farmacêutica: adesivo transdérmico"
+# (pedido de 25/11/2026). O painel tem a mesma regra em altocusto_combinacoes().
+TRANSDERMICO = ["adesiv", "transderm", "patch"]
+COMBINACOES = {
+    "Escopolamina adesivo": (["escopolamin", "hioscin"], TRANSDERMICO),
+}
+
+
+class TermosCombinados(Termos):
+    """Termos da lista e, para alguns medicamentos, princípio e forma em qualquer ponto do texto."""
+
+    def __init__(self, termos, combinacoes=()):
+        super().__init__(termos)
+        self.combinacoes = [(Trechos(base), Trechos(forma)) for base, forma in combinacoes]
+
+    def casa(self, texto):
+        return super().casa(texto) or any(b.casa(texto) and f.casa(texto) for b, f in self.combinacoes)
+
+
+def termos_do_grupo(grupo):
+    """Termos de um medicamento (a coleta de preços separa as compras por medicamento)."""
+    return TermosCombinados(MEDICAMENTOS[grupo], [COMBINACOES[grupo]] if grupo in COMBINACOES else [])
 
 # Confirmam item, mas não entram na busca do PNCP: "hidrocortisona" e
 # "comprimido" juntos trariam qualquer lista de farmácia básica.
@@ -115,26 +142,32 @@ FORMAS_EXCLUIDAS = {
 
 
 class ExcluiItem:
-    """Trechos que tiram o item e medicamento citado numa forma excluída."""
+    """Trechos que tiram o item e medicamento citado numa forma excluída. `salvos`: trecho que
+    não tira o item quando o texto também tem outra coisa."""
 
-    def __init__(self, trechos, formas):
+    def __init__(self, trechos, formas, salvos=None):
         self.trechos = Trechos(trechos)
         self.formas = [(Termos(MEDICAMENTOS[m]), Trechos(f)) for m, f in formas.items()]
+        self.salvos = {k: Trechos(v) for k, v in (salvos or {}).items()}
 
     def casa(self, texto):
-        if self.trechos.casa(texto):
-            return True
+        for t in self.trechos.achados(texto):
+            salvo = self.salvos.get(t)
+            if not (salvo and salvo.casa(texto)):
+                return True
         return any(med.casa(texto) and forma.casa(texto) for med, forma in self.formas)
 
 
-EXCLUI_ITEM = ExcluiItem(TRECHOS_EXCLUIDOS, FORMAS_EXCLUIDAS)
+# "butilbrometo" tira o Buscopan; com forma transdérmica é o adesivo do catálogo federal e fica
+EXCLUI_ITEM = ExcluiItem(TRECHOS_EXCLUIDOS, FORMAS_EXCLUIDAS,
+                         salvos={"butilbrometo": TRANSDERMICO, "butil brometo": TRANSDERMICO})
 
 RADAR = radar_comum.Radar(
     nome="altocusto",
     titulo="💊 RADAR ALTO CUSTO v3 — Licitações Farmacêuticas",
     tabela_editais="editais_pncp_altocusto",
     tabela_itens="itens_pncp_altocusto",
-    termos_itens=Termos(KEYWORDS),
+    termos_itens=TermosCombinados(KEYWORDS, COMBINACOES.values()),
     # Sem itens no PNCP, o objeto precisa citar o medicamento (sigla curta não basta).
     termos_objeto=Termos(KEYWORDS_BUSCA),
     termos_busca=KEYWORDS_BUSCA,
